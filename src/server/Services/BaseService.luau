@@ -21,9 +21,16 @@ type SpawnPoint = {
 	cframe: CFrame,
 }
 
+-- Centro do piso da base (girado só no eixo vertical, como o ringue) e o tamanho da área.
+type BaseArea = {
+	cframe: CFrame,
+	size: Vector3,
+}
+
 type BaseRecord = {
 	index: number,
 	spawn: SpawnPoint,
+	area: BaseArea,
 	owner: Player?,
 }
 
@@ -75,11 +82,20 @@ local function partFloor(part: BasePart): Vector3
 	return part.Position + Vector3.new(0, part.Size.Y / 2, 0)
 end
 
+-- Só a rotação no eixo vertical: a área da base fica sempre na horizontal,
+-- mesmo que o pivot do modelo esteja inclinado.
+local function yawOnly(cframe: CFrame): CFrame
+	local look = Vector3.new(cframe.LookVector.X, 0, cframe.LookVector.Z)
+	if look.Magnitude < 1e-3 then
+		return CFrame.identity
+	end
+	return CFrame.lookAt(Vector3.zero, look)
+end
+
 -- Chão do ringue no centro do modelo: um raio de cima pra baixo que só enxerga
 -- o próprio ringue. Usa o centro da caixa do modelo em vez do pivot, porque o
 -- pivot pode estar em qualquer lugar (ex.: num poste, se ele for o PrimaryPart).
-local function modelFloor(model: Model, path: string): Vector3
-	local boxCFrame, boxSize = model:GetBoundingBox()
+local function modelFloor(model: Model, boxCFrame: CFrame, boxSize: Vector3, path: string): Vector3
 	local center = boxCFrame.Position
 	local top = center.Y + boxSize.Y / 2
 
@@ -106,20 +122,27 @@ local function setupBases(map: Instance)
 	for index = 1, BASE_COUNT do
 		local path = `Workspace.Map.Bases.Base{index}`
 		local marker = folder:FindFirstChild(`Base{index}`)
-		local spawn: SpawnPoint? = nil
+		local area: BaseArea? = nil
 
 		if marker == nil then
 			warn(`[BaseService] Marcador '{path}' não encontrado — essa base fica fora do jogo`)
 		elseif marker:IsA("Model") then
-			spawn = newSpawnPoint(modelFloor(marker, path), marker)
+			local boxCFrame, boxSize = marker:GetBoundingBox()
+			local floor = modelFloor(marker, boxCFrame, boxSize, path)
+			area = { cframe = CFrame.new(floor) * yawOnly(boxCFrame), size = boxSize }
 		elseif marker:IsA("BasePart") then
-			spawn = newSpawnPoint(partFloor(marker), marker)
+			area = { cframe = CFrame.new(partFloor(marker)) * yawOnly(marker.CFrame), size = marker.Size }
 		else
 			warn(`[BaseService] '{path}' precisa ser um Model ou uma Part (é {marker.ClassName}) — essa base fica fora do jogo`)
 		end
 
-		if spawn then
-			bases[index] = { index = index, spawn = spawn, owner = nil }
+		if area and marker then
+			bases[index] = {
+				index = index,
+				spawn = newSpawnPoint(area.cframe.Position, marker),
+				area = area,
+				owner = nil,
+			}
 		end
 	end
 end
@@ -298,6 +321,16 @@ end
 function BaseService:GetOwner(baseIndex: number): Player?
 	local record = bases[baseIndex]
 	return if record then record.owner else nil
+end
+
+-- Centro do piso da base (girado como o ringue) e o tamanho da área, pra
+-- posicionar coisas dentro da base. nil se a base não existe.
+function BaseService:GetBaseArea(baseIndex: number): (CFrame?, Vector3?)
+	local record = bases[baseIndex]
+	if record then
+		return record.area.cframe, record.area.size
+	end
+	return nil, nil
 end
 
 -- Número da fase cujo volume PhaseN contém a posição (funciona com a Part

@@ -15,15 +15,23 @@ Nunca edite scripts direto no Studio. A fonte da verdade é `src/`. O mapa (Work
 
 Tema anime, com personagens 100% originais — nunca usar nomes, visuais ou elementos reconhecíveis de animes reais. Guerreiros são inspirados em arquétipos (ninja, samurai, monge, etc.), nunca cópias.
 
-- Mapa único: um corredor longo compartilhado, dividido em fases/mundos.
-- Pergaminhos ficam espalhados pelo chão das fases; o jogador pega e leva pra própria base.
-- Pergaminho aberto na base invoca um guerreiro, que fica ali gerando dinheiro por segundo.
-- Fases mais longe têm pergaminhos de raridade maior; pergaminhos lendários (e acima) spawnam de vez em quando e geram disputa entre os jogadores.
-- Jogadores treinam velocidade para conseguir chegar mais longe nas fases.
+Loop principal:
+
+1. O jogador treina velocidade numa esteira na própria base.
+2. Corre pelo corredor compartilhado, dividido em 10 fases, e pega um pergaminho no chão. Só dá para carregar 1 pergaminho por vez.
+3. Cada fase tem um guardião que persegue quem está carregando pergaminho. Se alcançar, arremessa o jogador para longe, e o pergaminho volta para a fase.
+4. Os guardiões ficam muito mais rápidos a cada fase: só com velocidade treinada dá para escapar nas fases finais.
+5. Pergaminho entregue na base "choca" por um tempo que depende da raridade (Comum é curto, Secreto é muito longo). O tempo corre mesmo com o jogador offline, então o jogo guarda o horário de início, não um contador.
+6. Quando termina de chocar, nasce um guerreiro que fica na base gerando dinheiro por segundo.
+
+Outras regras:
+
+- Há muitos guerreiros diferentes em cada raridade.
+- Fases mais longe têm pergaminhos de raridade maior. Pergaminhos lendários (e acima) aparecem de vez em quando e geram disputa entre os jogadores.
 - Jogadores podem roubar guerreiros e pergaminhos de outras bases.
 - **Raridades** (do mais comum ao mais raro): Comum, Raro, Épico, Lendário, Mítico, Secreto.
 - **Mutações**: multiplicador aplicado a um guerreiro (ex.: Despertado, Aura Dourada, Sombrio).
-- **Fases (mundos)**: 1) Vila Ninja, 2) Dojo da Montanha, 3) Cidade Neon, fase final) Mundo Espiritual.
+- **Fases (mundos)**: 10 no total. Nomes definidos até agora: 1) Vila Ninja, 2) Dojo da Montanha, 3) Cidade Neon, 10) Mundo Espiritual (a final). Fases 4 a 9 ainda sem nome.
 
 ## Mapeamento Rojo (`default.project.json`)
 
@@ -89,7 +97,7 @@ Workspace.Map
 - 5 bases no máximo (`BASE_COUNT` no topo do `BaseService`), então o servidor deve aceitar no máximo 5 jogadores. Isso se configura no Studio em *Game Settings → Places → Max Players = 5*; não dá para fazer pelo código.
 - Marcador de base: `Model` ou `Part`, ancorado.
   - **Model** (o ringue inteiro): o personagem nasce no centro do ringue, em cima do piso. O piso é achado com um raio de cima pra baixo no centro da caixa do modelo, que só enxerga o próprio ringue. Não depende do pivot. Não coloque nada pendurado bem em cima do centro do ringue, senão o raio acerta isso primeiro.
-  - **Part**: o personagem nasce em cima dela. Recomendado: pequena (ex.: 4×1×4), `Transparency = 1`, `CanCollide = false`, apoiada no piso do ringue.
+  - **Part**: o personagem nasce em cima dela. A área da Part também é a área onde dá pra colocar pergaminhos, então ela precisa cobrir o piso inteiro do ringue (`Transparency = 1`, `CanCollide = false`).
   - Sem placa nem nome em cima das bases. A altura de nascimento é `SPAWN_HEIGHT` no topo do `BaseService`.
 - Não precisa colocar `SpawnLocation` no mapa: o `BaseService` cria os pontos de nascimento sozinho. O do template pode ser apagado.
 - O número de fases é o maior `PhaseN` encontrado. `Phase1` é a mais perto das bases, e os volumes não devem se sobrepor.
@@ -105,13 +113,14 @@ Workspace.Map
 2. [x] PlayerData + DataStore
 3. [x] Currency (dinheiro)
 4. [x] Bases dos jogadores
-5. [ ] Pergaminhos e guerreiros
+5. [x] Guerreiros e pergaminhos (definições, raridade, choca, renda)
 6. [ ] Coleta de pergaminhos nas fases
-7. [ ] Inventário
-8. [ ] Roubo entre jogadores
-9. [ ] Upgrades
-10. [ ] Rebirth
-11. [ ] Monetização (Game Passes / Developer Products)
+7. [ ] Guardiões das fases
+8. [ ] Esteira de velocidade
+9. [ ] Roubo entre jogadores
+10. [ ] Upgrades
+11. [ ] Rebirth
+12. [ ] Monetização
 
 ## Forma de trabalhar
 
@@ -133,7 +142,7 @@ Workspace.Map
 - `PlayerDataService` (`src/server/Services/PlayerDataService/`) pronto:
   - Uma chave por jogador (`Player_<UserId>`) com `{ Data, Lock }`. Session lock via `UpdateAsync`: o lock expira em 180 s sem renovação; um servidor só grava se o lock for dele e, se não for, kicka o jogador.
   - Load com 5 tentativas (5 s entre elas); se falhar, kicka e não salva. Autosave a cada 60 s, save + liberação do lock ao sair e no `BindToClose`.
-  - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load).
+  - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load), `Money`, `Slots` (ver `WarriorService`).
   - API (outros serviços usam `require(script.Parent.PlayerDataService)`): `IsLoaded(player)`, `Get(player, key)` (tabelas vêm como cópia), `Set(player, key, value)`, `Update(player, key, fn)` (o `fn` não pode yieldar), `OnPlayerLoaded(callback)`. `Set`/`Update` retornam `false` se o jogador não estiver carregado e dão erro se a chave não existir no template, se for `DataVersion` ou se o tipo for diferente.
 - `CurrencyService` (`src/server/Services/CurrencyService.luau`) pronto:
   - `Money` (inteiro, `>= 0`) no template do `PlayerDataService`; chave nova de nível de cima, preenchida sozinha nos dados antigos, sem precisar de migração.
@@ -149,9 +158,20 @@ Workspace.Map
   - Quem encosta na `KillZone` tem o `Humanoid` morto e renasce no próprio ringue (ou no lobby).
   - `Players.PlayerRemoving` libera a base (dono = `nil`).
   - Marcador faltando ou errado gera `warn` específico no `Init`. Sem `Workspace.Map`, ninguém recebe base, mas todos ainda recebem personagem.
-  - API: `GetBase(player)` (índice `1..5` ou `nil`), `GetOwner(baseIndex)` (`Player?`), `GetPhaseAt(position)` (número da fase cujo volume `PhaseN` contém a posição, funcionando com a Part rotacionada, ou `nil`). Pensada para os sistemas futuros de pergaminhos e roubo.
+  - API: `GetBase(player)` (índice `1..5` ou `nil`), `GetOwner(baseIndex)` (`Player?`), `GetPhaseAt(position)` (número da fase cujo volume `PhaseN` contém a posição, funcionando com a Part rotacionada, ou `nil`), `GetBaseArea(baseIndex)` (`CFrame?, Vector3?`: centro do piso da base, girado só no eixo vertical como o ringue, e o tamanho da área; Model usa a caixa do modelo, Part usa o tamanho da Part).
 - Modo de teste do Studio (`src/server/Services/StudioTestService.luau`, opções em `src/shared/Config/StudioTest.luau`):
   - Só roda se `RunService:IsStudio()` for verdadeiro e `Enabled = true`. Fora do Studio, o `Start` retorna sem conectar nada, então nunca afeta o jogo publicado.
   - Hoje só faz uma coisa: `WalkSpeed = 100` a cada personagem que nasce. Avisa no Output (`warn`) que está ativo.
   - Quando existir o sistema de treino de velocidade, ele também vai mexer em `WalkSpeed` e vai brigar com este modo. Nesse momento, decidir qual dos dois prevalece no Studio.
+- `WarriorService` (`src/server/Services/WarriorService.luau`) pronto. Dados em `src/shared/Config/Rarities.luau` (cor, ordem, tempo de choca, faixa de renda) e `src/shared/Config/Warriors.luau` (36 guerreiros: 6 clãs × 6 raridades).
+  - Os Ids de raridade (`Common`..`Secret`) e de guerreiro (ex.: `kaseri`) ficam salvos nos dados: não renomeie. `DisplayName` e `Name` podem mudar.
+  - `Slots` no `PlayerData`: chave `"1".."6"` → `{ Rarity, StartedAt, OffsetX, OffsetZ, WarriorId? }`. `StartedAt` é `os.time()`, então a chocagem continua offline. `OffsetX/Z` é a posição relativa ao centro da base (`GetBaseArea`), então continua certa se o jogador pegar outra base; se a base nova for menor, o slot é trazido pra dentro dela.
+  - A cada 1 s, para cada jogador carregado: termina as chocagens vencidas, sorteando um guerreiro da raridade (qualquer clã); soma a renda dos guerreiros e chama `CurrencyService:AddMoney`; atualiza o visual. A renda só corre com o dono no jogo.
+  - Na inicialização, valida as configs: Ids únicos, raridade existente, renda inteira e dentro da faixa, pelo menos 1 guerreiro por raridade. Se algo falhar, dá erro e o `Start` não roda.
+  - API:
+    - `AddScroll(player, rarity, position?)`: retorna `(true)` ou `(false, motivo)`. Motivos: `NotLoaded`, `NoBase`, `NoPosition`, `OutsideBase`, `TooClose`, `NoFreeSlot`. Sem `position`, usa a posição atual do jogador. O servidor valida a posição: dentro da área do ringue do dono (`EDGE_MARGIN` da borda, altura perto do piso), a pelo menos `MIN_SLOT_DISTANCE` de outros slots, no máximo `SLOTS_PER_BASE` (6). Raridade inexistente dá `error()`.
+    - `GetSlots(player)`: lista de `{ Index, Rarity, StartedAt, ReadyAt, WarriorId?, Offset }` em ordem de índice, ou `nil` se os dados não estiverem carregados.
+  - Visual (só servidor, sem remotes): uma placa colorida pela raridade em cada slot, em `Workspace.WarriorSlots.<UserId>`, com um letreiro pequeno (visível até `LABEL_MAX_DISTANCE`). Chocando, mostra "Pergaminho", a raridade e o tempo restante; depois, o nome do guerreiro, a raridade e o `$/s`.
+  - Ainda não existe: mutações, renda offline, coleta nas fases, guardiões, esteira.
+- `TestService` (`src/server/Services/TestService.luau`) é **temporário**: só roda no Studio e dá pergaminhos de teste ao carregar o jogador (`RESET_SLOTS` no topo). Apagar quando existir a coleta nas fases (item 6).
 - Nenhum outro sistema de gameplay implementado ainda.
