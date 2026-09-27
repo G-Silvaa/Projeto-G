@@ -4,6 +4,7 @@
 local Template: { [string]: any } = {
 	DataVersion = 1,
 	JoinCount = 0,
+	Money = 0, -- inteiro; ver CurrencyService
 }
 
 return table.freeze(Template)
