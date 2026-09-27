@@ -7,6 +7,8 @@ local Template: { [string]: any } = {
 	Money = 0, -- inteiro; ver CurrencyService
 	-- Slots da base: chave "1".."N" -> { Rarity, StartedAt, OffsetX, OffsetZ, WarriorId? }; ver WarriorService.
 	Slots = {},
+	-- Pontos de velocidade treinados na esteira (pode ser fracionário); ver SpeedService.
+	Speed = 0,
 }
 
 return table.freeze(Template)

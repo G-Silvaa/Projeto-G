@@ -116,7 +116,7 @@ Workspace.Map
 5. [x] Guerreiros e pergaminhos (definições, raridade, choca, renda)
 6. [x] Coleta de pergaminhos nas fases
 7. [x] Guardiões das fases
-8. [ ] Esteira de velocidade
+8. [x] Esteira de velocidade
 9. [ ] Roubo entre jogadores
 10. [ ] Upgrades
 11. [ ] Rebirth
@@ -142,7 +142,7 @@ Workspace.Map
 - `PlayerDataService` (`src/server/Services/PlayerDataService/`) pronto:
   - Uma chave por jogador (`Player_<UserId>`) com `{ Data, Lock }`. Session lock via `UpdateAsync`: o lock expira em 180 s sem renovação; um servidor só grava se o lock for dele e, se não for, kicka o jogador.
   - Load com 5 tentativas (5 s entre elas); se falhar, kicka e não salva. Autosave a cada 60 s, save + liberação do lock ao sair e no `BindToClose`.
-  - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load), `Money`, `Slots` (ver `WarriorService`).
+  - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load), `Money`, `Slots` (ver `WarriorService`), `Speed` (ver `SpeedService`).
   - API (outros serviços usam `require(script.Parent.PlayerDataService)`): `IsLoaded(player)`, `Get(player, key)` (tabelas vêm como cópia), `Set(player, key, value)`, `Update(player, key, fn)` (o `fn` não pode yieldar), `OnPlayerLoaded(callback)`. `Set`/`Update` retornam `false` se o jogador não estiver carregado e dão erro se a chave não existir no template, se for `DataVersion` ou se o tipo for diferente.
 - `CurrencyService` (`src/server/Services/CurrencyService.luau`) pronto:
   - `Money` (inteiro, `>= 0`) no template do `PlayerDataService`; chave nova de nível de cima, preenchida sozinha nos dados antigos, sem precisar de migração.
@@ -158,11 +158,7 @@ Workspace.Map
   - Quem encosta na `KillZone` tem o `Humanoid` morto e renasce no próprio ringue (ou no lobby).
   - `Players.PlayerRemoving` libera a base (dono = `nil`).
   - Marcador faltando ou errado gera `warn` específico no `Init`. Sem `Workspace.Map`, ninguém recebe base, mas todos ainda recebem personagem.
-  - API: `GetBase(player)` (índice `1..5` ou `nil`), `GetOwner(baseIndex)` (`Player?`), `GetPhaseAt(position)` (número da fase cujo volume `PhaseN` contém a posição, funcionando com a Part rotacionada, ou `nil`), `GetBaseArea(baseIndex)` (`CFrame?, Vector3?`: centro do piso da base, girado só no eixo vertical como o ringue, e o tamanho da área; Model usa a caixa do modelo, Part usa o tamanho da Part), `GetPhaseCount()` (maior `N` entre os `PhaseN`), `GetPhasePart(index)` (`BasePart?`).
-- Modo de teste do Studio (`src/server/Services/StudioTestService.luau`, opções em `src/shared/Config/StudioTest.luau`):
-  - Só roda se `RunService:IsStudio()` for verdadeiro e `Enabled = true`. Fora do Studio, o `Start` retorna sem conectar nada, então nunca afeta o jogo publicado.
-  - Hoje só faz uma coisa: `WalkSpeed = 100` a cada personagem que nasce. Avisa no Output (`warn`) que está ativo.
-  - Quando existir o sistema de treino de velocidade, ele também vai mexer em `WalkSpeed` e vai brigar com este modo. Nesse momento, decidir qual dos dois prevalece no Studio.
+  - API: `GetBase(player)` (índice `1..5` ou `nil`), `GetOwner(baseIndex)` (`Player?`), `GetPhaseAt(position)` (número da fase cujo volume `PhaseN` contém a posição, funcionando com a Part rotacionada, ou `nil`), `GetBaseArea(baseIndex)` (`CFrame?, Vector3?`: centro do piso da base, girado só no eixo vertical como o ringue, e o tamanho da área; Model usa a caixa do modelo, Part usa o tamanho da Part), `GetPhaseCount()` (maior `N` entre os `PhaseN`), `GetPhasePart(index)` (`BasePart?`), `GetBaseCount()`, `GetBaseInstance(index)` (o marcador `BaseN`).
 - `WarriorService` (`src/server/Services/WarriorService.luau`) pronto. Dados em `src/shared/Config/Rarities.luau` (cor, ordem, tempo de choca, faixa de renda) e `src/shared/Config/Warriors.luau` (36 guerreiros: 6 clãs × 6 raridades).
   - Os Ids de raridade (`Common`..`Secret`) e de guerreiro (ex.: `kaseri`) ficam salvos nos dados: não renomeie. `DisplayName` e `Name` podem mudar.
   - `Slots` no `PlayerData`: chave `"1".."6"` → `{ Rarity, StartedAt, OffsetX, OffsetZ, WarriorId? }`. `StartedAt` é `os.time()`, então a chocagem continua offline. `OffsetX/Z` é a posição relativa ao centro da base (`GetBaseArea`), então continua certa se o jogador pegar outra base; se a base nova for menor, o slot é trazido pra dentro dela.
@@ -189,6 +185,11 @@ Workspace.Map
   - A cada `UpdateInterval` (0,15 s): persegue, em linha reta (`MoveTo`), o jogador mais próximo que carrega pergaminho **dentro da fase dele**; sem alvo, volta ao posto.
   - Captura (só no servidor): raio `max(CatchDistance, velocidade × intervalo × 0,5)`. O pergaminho volta para a fase de origem (`ScrollService:DropCarried`), o jogador é arremessado por um `LinearVelocity` curto (sem dano) e recebe `Notify`. Depois o guardião ignora alvos por `CatchCooldown`.
   - `ScrollService` ganhou `IsCarrying`, `GetCarriers` e `DropCarried`.
+- `SpeedService` (`src/server/Services/SpeedService.luau`) pronto. Config em `src/shared/Config/Speed.luau`.
+  - `Speed` (pontos, pode ser fracionário) no `PlayerData`. `WalkSpeed = min(MaxWalkSpeed, BaseWalkSpeed + Speed × WalkSpeedPerPoint)` (16 + 0,5 por ponto, teto 350). `Speed` inteiro no leaderstats.
+  - **Esteira:** uma por base. Usa o marcador `Treadmill` (Part) dentro do `BaseN` se existir; senão cria uma Part perto da borda +Z da área do ringue. É uma esteira rolante: `AssemblyLinearVelocity` no sentido do `LookVector` da Part, na mesma velocidade que o dono anda. Parado, o jogador sai dela; só fica em cima quem corre contra. Por isso "o dono está em cima" basta para treinar (a cada `TrainingTick`, `GainPerSecond` × multiplicadores), sem confiar no cliente. Treina só o dono da base.
+  - **Modo de teste do Studio** (`src/shared/Config/StudioTest.luau`): agora aplicado aqui. Com `RunService:IsStudio()` e `Enabled = true`, `WalkSpeed = max(treinado, StudioTest.WalkSpeed)`. O `Speed` salvo só cresce na esteira, então o valor de teste nunca é salvo. O antigo `StudioTestService` foi removido.
+  - API: `GetSpeed(player)`, `AddTrainingMultiplier(fn)` (outros serviços registram multiplicadores do treino).
 - `HudController` (`src/client/Controllers/HudController.luau`): mostra as mensagens do `Events.Notify`.
 - `ScrollController` (`src/client/Controllers/ScrollController.luau`): botão "Colocar pergaminho", que só aparece com `CarryingScroll` e `InOwnBase`, mensagem de resultado por 3 s, aviso do evento no chat (`TextChatService`, canal `RBXGeneral`) e giro dos pergaminhos no chão.
 - Nenhum outro sistema de gameplay implementado ainda.

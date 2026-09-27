@@ -31,6 +31,7 @@ type BaseRecord = {
 	index: number,
 	spawn: SpawnPoint,
 	area: BaseArea,
+	marker: Instance,
 	owner: Player?,
 }
 
@@ -141,6 +142,7 @@ local function setupBases(map: Instance)
 				index = index,
 				spawn = newSpawnPoint(area.cframe.Position, marker),
 				area = area,
+				marker = marker,
 				owner = nil,
 			}
 		end
@@ -335,6 +337,16 @@ end
 
 -- Número da fase cujo volume PhaseN contém a posição (funciona com a Part
 -- rotacionada), ou nil se estiver fora de todas.
+function BaseService:GetBaseCount(): number
+	return BASE_COUNT
+end
+
+-- O marcador BaseN do mapa (Model do ringue ou Part), ou nil se a base não existe.
+function BaseService:GetBaseInstance(baseIndex: number): Instance?
+	local record = bases[baseIndex]
+	return if record then record.marker else nil
+end
+
 -- Maior N entre os PhaseN encontrados no mapa (pode haver buracos; ver GetPhasePart).
 function BaseService:GetPhaseCount(): number
 	return phaseCount
