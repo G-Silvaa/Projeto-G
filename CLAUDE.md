@@ -118,7 +118,7 @@ Workspace.Map
 7. [x] Guardiões das fases
 8. [x] Esteira de velocidade
 9. [x] Roubo entre jogadores
-10. [ ] Upgrades
+10. [x] Upgrades
 11. [ ] Rebirth
 12. [ ] Monetização
 
@@ -137,12 +137,13 @@ Workspace.Map
 - Estrutura base pronta:
   - `Main.server.luau` chama `Remotes.setup()`, carrega os ModuleScripts de `Services/` (outros tipos de filho são ignorados), chama `Init()` em ordem alfabética e depois `Start()` em `task.spawn`. Os dois métodos são opcionais e chamados com `:`. Erro em um serviço gera `warn` e não derruba os outros; se o `Init` falhar, o `Start` daquele serviço não roda.
   - `Main.client.luau` faz o mesmo com `Controllers/`.
-  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor); `getEvent(name)` / `getFunction(name)` nos dois lados. Hoje: `Functions.PlaceScroll`, `Events.Announcement` (ver `ScrollService`) e `Events.Notify` (mensagem curta do servidor para um jogador, mostrada pelo `HudController`).
+  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor); `getEvent(name)` / `getFunction(name)` nos dois lados. Hoje: `Functions.PlaceScroll`, `Functions.BuyUpgrade` (ver `UpgradeService`), `Events.Announcement` (ver `ScrollService`) e `Events.Notify` (mensagem curta do servidor para um jogador, mostrada pelo `HudController`).
   - `src/shared/Config/init.luau` contém só a versão (`0.0.1`).
+  - `src/shared/Format.luau`: `Format.number(n)` → "950", "1.5K", "2.3M", "4.1B"... (servidor e cliente).
 - `PlayerDataService` (`src/server/Services/PlayerDataService/`) pronto:
   - Uma chave por jogador (`Player_<UserId>`) com `{ Data, Lock }`. Session lock via `UpdateAsync`: o lock expira em 180 s sem renovação; um servidor só grava se o lock for dele e, se não for, kicka o jogador.
   - Load com 5 tentativas (5 s entre elas); se falhar, kicka e não salva. Autosave a cada 60 s, save + liberação do lock ao sair e no `BindToClose`.
-  - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load), `Money`, `Slots` (ver `WarriorService`), `Speed` (ver `SpeedService`).
+  - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load), `Money`, `Slots` (ver `WarriorService`), `Speed` (ver `SpeedService`), `Upgrades` (ver `UpgradeService`).
   - API (outros serviços usam `require(script.Parent.PlayerDataService)`): `IsLoaded(player)`, `Get(player, key)` (tabelas vêm como cópia), `Set(player, key, value)`, `Update(player, key, fn)` (o `fn` não pode yieldar), `OnPlayerLoaded(callback)`. `Set`/`Update` retornam `false` se o jogador não estiver carregado e dão erro se a chave não existir no template, se for `DataVersion` ou se o tipo for diferente.
 - `CurrencyService` (`src/server/Services/CurrencyService.luau`) pronto:
   - `Money` (inteiro, `>= 0`) no template do `PlayerDataService`; chave nova de nível de cima, preenchida sozinha nos dados antigos, sem precisar de migração.
@@ -201,6 +202,12 @@ Workspace.Map
     - O dono saiu no meio: o roubo é cancelado e o item fica salvo com o dono.
   - O dono é avisado (`Notify`) no início, na entrega e na devolução.
   - `ScrollService` passou a ter carga genérica: `CarryItem(player, rarity, onPlace, onLost)`. Os pergaminhos de fase usam o mesmo caminho.
+- `UpgradeService` (`src/server/Services/UpgradeService.luau`) pronto. Config em `src/shared/Config/Upgrades.luau`: Mais espaço (+1 slot/nível, até 6), Renda (+10%/nível, até 10), Treino (+25%/nível, até 10). Preço `floor(BaseCost × CostGrowth^nível)`, calculado por `CostFor` (o mesmo no servidor e no cliente).
+  - Níveis em `PlayerData.Upgrades` (`{ [Id]: nível }`), expostos ao cliente como atributos `Upgrade_<Id>` (só para exibir).
+  - Remote `Functions.BuyUpgrade(upgradeId)`. O servidor valida: tipo, Id existente, rate limit (0,3 s), dados carregados, dentro do próprio ringue, nível máximo e dinheiro (`CurrencyService:RemoveMoney`).
+  - Efeitos registrados nos serviços que os aplicam: `WarriorService:AddSlotBonus`, `WarriorService:AddIncomeMultiplier`, `SpeedService:AddTrainingMultiplier`.
+  - API: `GetLevel(player, id)`, `ResetAll(player)` (usado pelo rebirth).
+- `ShopController` (`src/client/Controllers/ShopController.luau`): botão "Loja", que só aparece com `InOwnBase`, e painel com os upgrades (nível, efeito, preço formatado, "Comprar" e mensagem do servidor).
 - `HudController` (`src/client/Controllers/HudController.luau`): mostra as mensagens do `Events.Notify`.
 - `ScrollController` (`src/client/Controllers/ScrollController.luau`): botão "Colocar pergaminho", que só aparece com `CarryingScroll` e `InOwnBase`, mensagem de resultado por 3 s, aviso do evento no chat (`TextChatService`, canal `RBXGeneral`) e giro dos pergaminhos no chão.
 - Nenhum outro sistema de gameplay implementado ainda.

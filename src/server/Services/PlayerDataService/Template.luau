@@ -9,6 +9,8 @@ local Template: { [string]: any } = {
 	Slots = {},
 	-- Pontos de velocidade treinados na esteira (pode ser fracionário); ver SpeedService.
 	Speed = 0,
+	-- Níveis dos upgrades: { [Id]: nível } (Id de Config/Upgrades); ver UpgradeService.
+	Upgrades = {},
 }
 
 return table.freeze(Template)
