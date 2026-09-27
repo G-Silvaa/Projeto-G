@@ -114,7 +114,7 @@ Workspace.Map
 3. [x] Currency (dinheiro)
 4. [x] Bases dos jogadores
 5. [x] Guerreiros e pergaminhos (definições, raridade, choca, renda)
-6. [ ] Coleta de pergaminhos nas fases
+6. [x] Coleta de pergaminhos nas fases
 7. [ ] Guardiões das fases
 8. [ ] Esteira de velocidade
 9. [ ] Roubo entre jogadores
@@ -137,7 +137,7 @@ Workspace.Map
 - Estrutura base pronta:
   - `Main.server.luau` chama `Remotes.setup()`, carrega os ModuleScripts de `Services/` (outros tipos de filho são ignorados), chama `Init()` em ordem alfabética e depois `Start()` em `task.spawn`. Os dois métodos são opcionais e chamados com `:`. Erro em um serviço gera `warn` e não derruba os outros; se o `Init` falhar, o `Start` daquele serviço não roda.
   - `Main.client.luau` faz o mesmo com `Controllers/`.
-  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor, vazios por enquanto); `getEvent(name)` / `getFunction(name)` nos dois lados.
+  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor); `getEvent(name)` / `getFunction(name)` nos dois lados. Hoje: `Functions.PlaceScroll` e `Events.Announcement` (ver `ScrollService`).
   - `src/shared/Config/init.luau` contém só a versão (`0.0.1`).
 - `PlayerDataService` (`src/server/Services/PlayerDataService/`) pronto:
   - Uma chave por jogador (`Player_<UserId>`) com `{ Data, Lock }`. Session lock via `UpdateAsync`: o lock expira em 180 s sem renovação; um servidor só grava se o lock for dele e, se não for, kicka o jogador.
@@ -158,7 +158,7 @@ Workspace.Map
   - Quem encosta na `KillZone` tem o `Humanoid` morto e renasce no próprio ringue (ou no lobby).
   - `Players.PlayerRemoving` libera a base (dono = `nil`).
   - Marcador faltando ou errado gera `warn` específico no `Init`. Sem `Workspace.Map`, ninguém recebe base, mas todos ainda recebem personagem.
-  - API: `GetBase(player)` (índice `1..5` ou `nil`), `GetOwner(baseIndex)` (`Player?`), `GetPhaseAt(position)` (número da fase cujo volume `PhaseN` contém a posição, funcionando com a Part rotacionada, ou `nil`), `GetBaseArea(baseIndex)` (`CFrame?, Vector3?`: centro do piso da base, girado só no eixo vertical como o ringue, e o tamanho da área; Model usa a caixa do modelo, Part usa o tamanho da Part).
+  - API: `GetBase(player)` (índice `1..5` ou `nil`), `GetOwner(baseIndex)` (`Player?`), `GetPhaseAt(position)` (número da fase cujo volume `PhaseN` contém a posição, funcionando com a Part rotacionada, ou `nil`), `GetBaseArea(baseIndex)` (`CFrame?, Vector3?`: centro do piso da base, girado só no eixo vertical como o ringue, e o tamanho da área; Model usa a caixa do modelo, Part usa o tamanho da Part), `GetPhaseCount()` (maior `N` entre os `PhaseN`), `GetPhasePart(index)` (`BasePart?`).
 - Modo de teste do Studio (`src/server/Services/StudioTestService.luau`, opções em `src/shared/Config/StudioTest.luau`):
   - Só roda se `RunService:IsStudio()` for verdadeiro e `Enabled = true`. Fora do Studio, o `Start` retorna sem conectar nada, então nunca afeta o jogo publicado.
   - Hoje só faz uma coisa: `WalkSpeed = 100` a cada personagem que nasce. Avisa no Output (`warn`) que está ativo.
@@ -171,7 +171,18 @@ Workspace.Map
   - API:
     - `AddScroll(player, rarity, position?)`: retorna `(true)` ou `(false, motivo)`. Motivos: `NotLoaded`, `NoBase`, `NoPosition`, `OutsideBase`, `TooClose`, `NoFreeSlot`. Sem `position`, usa a posição atual do jogador. O servidor valida a posição: dentro da área do ringue do dono (`EDGE_MARGIN` da borda, altura perto do piso), a pelo menos `MIN_SLOT_DISTANCE` de outros slots, no máximo `SLOTS_PER_BASE` (6). Raridade inexistente dá `error()`.
     - `GetSlots(player)`: lista de `{ Index, Rarity, StartedAt, ReadyAt, WarriorId?, Offset }` em ordem de índice, ou `nil` se os dados não estiverem carregados.
+    - `GetMaxSlots()` e `IsInPlacementArea(player, position?)` (mesma regra de área do `AddScroll`, sem olhar distância nem espaço livre).
   - Visual (só servidor, sem remotes): uma placa colorida pela raridade em cada slot, em `Workspace.WarriorSlots.<UserId>`, com um letreiro pequeno (visível até `LABEL_MAX_DISTANCE`). Chocando, mostra "Pergaminho", a raridade e o tempo restante; depois, o nome do guerreiro, a raridade e o `$/s`.
-  - Ainda não existe: mutações, renda offline, coleta nas fases, guardiões, esteira.
-- `TestService` (`src/server/Services/TestService.luau`) é **temporário**: só roda no Studio e dá pergaminhos de teste ao carregar o jogador (`RESET_SLOTS` no topo). Apagar quando existir a coleta nas fases (item 6).
+  - Ainda não existe: mutações, renda offline.
+- `ScrollService` (`src/server/Services/ScrollService.luau`) pronto. Config em `src/shared/Config/Phases.luau`: `Phases[N]` com pesos de raridade, `MaxScrolls` e `SpawnInterval` de cada fase; `LegendaryEvent`.
+  - **Spawn:** cada fase começa cheia e depois repõe 1 pergaminho por `SpawnInterval`, até `MaxScrolls`. O ponto é aleatório dentro do volume `PhaseN`, e um raio de cima pra baixo acha o chão.
+  - **Evento lendário:** a cada `IntervalSeconds`, um pergaminho lendário+ aparece numa das fases de `LegendaryEvent.Phases`, e o chat de todo o servidor recebe um aviso (`Events.Announcement`). Ele não conta no `MaxScrolls`.
+  - **Descompasso config × mapa:** fase da config sem `PhaseN` no mapa, ou `PhaseN` sem config, gera `warn` no início e fica sem pergaminhos.
+  - **Contagem:** um pergaminho conta no `MaxScrolls` da fase de origem desde que aparece até ser colocado numa base, inclusive enquanto alguém carrega.
+  - **Coleta:** pega encostando (`Touched`), mas o servidor confere a distância real até o personagem (`PICKUP_DISTANCE`), porque um exploit consegue disparar `Touched` de longe. Só dá pra carregar 1 por vez. Ele aparece acima da cabeça, preso ao personagem e sem colisão.
+  - **Perda:** morrer (a KillZone mata), trocar de personagem ou sair do jogo faz o pergaminho voltar para o chão da mesma fase, com a mesma raridade.
+  - **Colocar:** enquanto o jogador carrega, o servidor marca no `Player` os atributos `CarryingScroll` (raridade) e `InOwnBase` (a cada 0,25 s, via `IsInPlacementArea`). Eles só servem para o cliente mostrar o botão; o servidor não confia neles.
+  - **Remote `Functions.PlaceScroll`:** não recebe argumento nenhum. O servidor usa o pergaminho carregado e a posição atual no `AddScroll`, com rate limit de 1 chamada a cada `PLACE_COOLDOWN` (0,5 s) por jogador. Devolve `(ok, mensagem)` já em português.
+  - **Visual:** pergaminho `Neon` na cor da raridade, com letreiro pequeno, em `Workspace.PhaseScrolls`. O giro é feito só no cliente.
+- `ScrollController` (`src/client/Controllers/ScrollController.luau`): botão "Colocar pergaminho", que só aparece com `CarryingScroll` e `InOwnBase`, mensagem de resultado por 3 s, aviso do evento no chat (`TextChatService`, canal `RBXGeneral`) e giro dos pergaminhos no chão.
 - Nenhum outro sistema de gameplay implementado ainda.

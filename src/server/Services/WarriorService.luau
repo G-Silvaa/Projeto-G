@@ -473,6 +473,21 @@ function WarriorService:AddScroll(player: Player, rarity: string, position: Vect
 	return true, nil
 end
 
+function WarriorService:GetMaxSlots(): number
+	return SLOTS_PER_BASE
+end
+
+-- Se a posição (ou a posição atual do jogador) está na área do próprio ringue onde
+-- o AddScroll aceitaria colocar. Não olha distância nem espaço livre.
+function WarriorService:IsInPlacementArea(player: Player, position: Vector3?): boolean
+	local areaCFrame, areaSize = getArea(player)
+	local target = resolvePosition(player, position)
+	if not areaCFrame or not areaSize or target == nil or not isFiniteVector(target) then
+		return false
+	end
+	return toOffset(areaCFrame, areaSize, target) ~= nil
+end
+
 -- Slots ocupados do jogador, em ordem de índice; nil se os dados não estiverem carregados.
 function WarriorService:GetSlots(player: Player): { SlotInfo }?
 	local slots = getSlots(player)

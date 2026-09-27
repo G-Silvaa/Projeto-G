@@ -335,6 +335,16 @@ end
 
 -- Número da fase cujo volume PhaseN contém a posição (funciona com a Part
 -- rotacionada), ou nil se estiver fora de todas.
+-- Maior N entre os PhaseN encontrados no mapa (pode haver buracos; ver GetPhasePart).
+function BaseService:GetPhaseCount(): number
+	return phaseCount
+end
+
+-- Volume invisível da fase, ou nil se esse PhaseN não existe no mapa.
+function BaseService:GetPhasePart(index: number): BasePart?
+	return phaseParts[index]
+end
+
 function BaseService:GetPhaseAt(position: Vector3): number?
 	for index = 1, phaseCount do
 		local part = phaseParts[index]

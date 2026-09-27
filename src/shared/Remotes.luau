@@ -8,9 +8,15 @@ local FOLDER_NAME = "Remotes"
 local Remotes = {}
 
 -- Chave = valor, para usar como Remotes.Events.NomeDoRemote.
-Remotes.Events = {} :: { [string]: string }
+Remotes.Events = {
+	-- Servidor -> todos: aviso no chat (evento de pergaminho lendário).
+	Announcement = "Announcement",
+} :: { [string]: string }
 
-Remotes.Functions = {} :: { [string]: string }
+Remotes.Functions = {
+	-- Cliente -> servidor, sem argumentos: colocar o pergaminho carregado na posição atual.
+	PlaceScroll = "PlaceScroll",
+} :: { [string]: string }
 
 local function createAll(folder: Folder, className: "RemoteEvent" | "RemoteFunction", names: { [string]: string })
 	for key, name in names do
