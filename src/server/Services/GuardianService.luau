@@ -147,7 +147,8 @@ local function knockback(guardian: Guardian, targetRoot: BasePart)
 	local push = Instance.new("LinearVelocity")
 	push.Name = "GuardianKnockback"
 	push.Attachment0 = attachment
-	push.MaxForce = math.huge
+	-- Força grande e finita: infinito em física pode dar problema.
+	push.MaxForce = 1e7
 	push.VectorVelocity = velocity
 	push.Parent = targetRoot
 
