@@ -11,6 +11,8 @@ local Remotes = {}
 Remotes.Events = {
 	-- Servidor -> todos: aviso no chat (evento de pergaminho lendário).
 	Announcement = "Announcement",
+	-- Servidor -> um jogador: mensagem curta na tela (ex.: "O guardião te pegou!").
+	Notify = "Notify",
 } :: { [string]: string }
 
 Remotes.Functions = {

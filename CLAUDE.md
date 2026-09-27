@@ -115,7 +115,7 @@ Workspace.Map
 4. [x] Bases dos jogadores
 5. [x] Guerreiros e pergaminhos (definições, raridade, choca, renda)
 6. [x] Coleta de pergaminhos nas fases
-7. [ ] Guardiões das fases
+7. [x] Guardiões das fases
 8. [ ] Esteira de velocidade
 9. [ ] Roubo entre jogadores
 10. [ ] Upgrades
@@ -137,7 +137,7 @@ Workspace.Map
 - Estrutura base pronta:
   - `Main.server.luau` chama `Remotes.setup()`, carrega os ModuleScripts de `Services/` (outros tipos de filho são ignorados), chama `Init()` em ordem alfabética e depois `Start()` em `task.spawn`. Os dois métodos são opcionais e chamados com `:`. Erro em um serviço gera `warn` e não derruba os outros; se o `Init` falhar, o `Start` daquele serviço não roda.
   - `Main.client.luau` faz o mesmo com `Controllers/`.
-  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor); `getEvent(name)` / `getFunction(name)` nos dois lados. Hoje: `Functions.PlaceScroll` e `Events.Announcement` (ver `ScrollService`).
+  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor); `getEvent(name)` / `getFunction(name)` nos dois lados. Hoje: `Functions.PlaceScroll`, `Events.Announcement` (ver `ScrollService`) e `Events.Notify` (mensagem curta do servidor para um jogador, mostrada pelo `HudController`).
   - `src/shared/Config/init.luau` contém só a versão (`0.0.1`).
 - `PlayerDataService` (`src/server/Services/PlayerDataService/`) pronto:
   - Uma chave por jogador (`Player_<UserId>`) com `{ Data, Lock }`. Session lock via `UpdateAsync`: o lock expira em 180 s sem renovação; um servidor só grava se o lock for dele e, se não for, kicka o jogador.
@@ -184,5 +184,11 @@ Workspace.Map
   - **Colocar:** enquanto o jogador carrega, o servidor marca no `Player` os atributos `CarryingScroll` (raridade) e `InOwnBase` (a cada 0,25 s, via `IsInPlacementArea`). Eles só servem para o cliente mostrar o botão; o servidor não confia neles.
   - **Remote `Functions.PlaceScroll`:** não recebe argumento nenhum. O servidor usa o pergaminho carregado e a posição atual no `AddScroll`, com rate limit de 1 chamada a cada `PLACE_COOLDOWN` (0,5 s) por jogador. Devolve `(ok, mensagem)` já em português.
   - **Visual:** pergaminho `Neon` na cor da raridade, com letreiro pequeno, em `Workspace.PhaseScrolls`. O giro é feito só no cliente.
+- `GuardianService` (`src/server/Services/GuardianService.luau`) pronto. Config em `src/shared/Config/Guardians.luau` (velocidade por fase, 14 → 250; intervalo; captura; arremesso).
+  - Um NPC R15 por `PhaseN`, criado pelo servidor (`Players:CreateHumanoidModelFromDescription`, sem asset externo) em `Workspace.Guardians`, parado no centro do chão da fase. Vida infinita; a física é do servidor.
+  - A cada `UpdateInterval` (0,15 s): persegue, em linha reta (`MoveTo`), o jogador mais próximo que carrega pergaminho **dentro da fase dele**; sem alvo, volta ao posto.
+  - Captura (só no servidor): raio `max(CatchDistance, velocidade × intervalo × 0,5)`. O pergaminho volta para a fase de origem (`ScrollService:DropCarried`), o jogador é arremessado por um `LinearVelocity` curto (sem dano) e recebe `Notify`. Depois o guardião ignora alvos por `CatchCooldown`.
+  - `ScrollService` ganhou `IsCarrying`, `GetCarriers` e `DropCarried`.
+- `HudController` (`src/client/Controllers/HudController.luau`): mostra as mensagens do `Events.Notify`.
 - `ScrollController` (`src/client/Controllers/ScrollController.luau`): botão "Colocar pergaminho", que só aparece com `CarryingScroll` e `InOwnBase`, mensagem de resultado por 3 s, aviso do evento no chat (`TextChatService`, canal `RBXGeneral`) e giro dos pergaminhos no chão.
 - Nenhum outro sistema de gameplay implementado ainda.

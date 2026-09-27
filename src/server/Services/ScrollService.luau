@@ -343,6 +343,23 @@ local function updateBaseAttributes()
 	end
 end
 
+function ScrollService:IsCarrying(player: Player): boolean
+	return carrying[player] ~= nil
+end
+
+function ScrollService:GetCarriers(): { Player }
+	local list: { Player } = {}
+	for player in carrying do
+		table.insert(list, player)
+	end
+	return list
+end
+
+-- Tira o pergaminho do jogador e devolve para a fase de origem (ex.: guardião pegou).
+function ScrollService:DropCarried(player: Player)
+	loseCarried(player)
+end
+
 function ScrollService:Init()
 	local function checkWeights(weights: { [string]: number }, where: string)
 		for id in weights do
