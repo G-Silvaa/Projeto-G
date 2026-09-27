@@ -28,8 +28,6 @@ local ScrollService = {}
 local PICKUP_DISTANCE = 8
 -- Intervalo mínimo entre duas chamadas de PlaceScroll do mesmo jogador.
 local PLACE_COOLDOWN = 0.5
--- Frequência da checagem "está dentro do próprio ringue" (só pra mostrar o botão).
-local BASE_CHECK_INTERVAL = 0.25
 -- Tentativas de achar chão num ponto aleatório da fase antes de desistir do spawn.
 local SPAWN_ATTEMPTS = 5
 local SCROLL_HOVER = 1.5
@@ -44,6 +42,7 @@ local MESSAGES: { [string]: string } = {
 	TooClose = "Muito perto de outro guerreiro",
 	NotCarrying = "Você não está carregando pergaminho",
 	RateLimited = "Calma, tente de novo",
+	Gone = "Esse item não existe mais",
 }
 
 type GroundScroll = {
@@ -52,11 +51,15 @@ type GroundScroll = {
 	fromEvent: boolean,
 }
 
+-- onPlace: o que acontece ao apertar "Colocar" (true = entregue; "Gone" = o item
+-- deixou de existir e a carga acaba). onLost: morreu, foi pego ou saiu.
+export type PlaceHandler = (player: Player) -> (boolean, string?)
+
 type Carried = {
 	rarity: string,
-	phase: number,
-	fromEvent: boolean,
 	visual: BasePart,
+	onPlace: PlaceHandler,
+	onLost: () -> (),
 }
 
 local groundScrolls: { [BasePart]: GroundScroll } = {}
@@ -186,23 +189,47 @@ local function stopCarrying(player: Player): Carried?
 	carrying[player] = nil
 	carried.visual:Destroy()
 	player:SetAttribute("CarryingScroll", nil)
-	player:SetAttribute("InOwnBase", nil)
 	return carried
 end
 
--- Morreu, trocou de personagem ou saiu: o pergaminho volta para o chão da fase de origem.
+-- Morreu, trocou de personagem, foi pego ou saiu: quem criou a carga decide o destino.
 local function loseCarried(player: Player)
 	local carried = stopCarrying(player)
-	if carried == nil then
-		return
-	end
-	if not spawnScroll(carried.phase, carried.rarity, carried.fromEvent) and not carried.fromEvent then
-		countByPhase[carried.phase] -= 1
+	if carried then
+		carried.onLost()
 	end
 end
 
-local function startCarrying(player: Player, character: Model, anchor: BasePart, scroll: GroundScroll)
-	local visual = createScrollPart(scroll.rarity)
+-- Personagem vivo e o ponto onde o item fica preso (cabeça, ou o HumanoidRootPart).
+local function carryAnchor(player: Player): (Model?, BasePart?)
+	local character = player.Character
+	if character == nil then
+		return nil, nil
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid == nil or humanoid.Health <= 0 then
+		return nil, nil
+	end
+	local head = character:FindFirstChild("Head")
+	if head and head:IsA("BasePart") then
+		return character, head
+	end
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if root and root:IsA("BasePart") then
+		return character, root
+	end
+	return nil, nil
+end
+
+local function startCarrying(
+	player: Player,
+	character: Model,
+	anchor: BasePart,
+	rarity: string,
+	onPlace: PlaceHandler,
+	onLost: () -> ()
+)
+	local visual = createScrollPart(rarity)
 	visual.Name = "CarriedScroll"
 	visual.Anchored = false
 	visual.CanTouch = false
@@ -216,12 +243,12 @@ local function startCarrying(player: Player, character: Model, anchor: BasePart,
 	visual.Parent = character
 
 	carrying[player] = {
-		rarity = scroll.rarity,
-		phase = scroll.phase,
-		fromEvent = scroll.fromEvent,
+		rarity = rarity,
 		visual = visual,
+		onPlace = onPlace,
+		onLost = onLost,
 	}
-	player:SetAttribute("CarryingScroll", scroll.rarity)
+	player:SetAttribute("CarryingScroll", rarity)
 
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if humanoid then
@@ -246,12 +273,9 @@ onScrollTouched = function(part: BasePart, hit: BasePart)
 		return
 	end
 
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if humanoid == nil or humanoid.Health <= 0 then
-		return
-	end
+	local carrier, anchor = carryAnchor(player)
 	local root = character:FindFirstChild("HumanoidRootPart")
-	if root == nil or not root:IsA("BasePart") then
+	if carrier == nil or anchor == nil or root == nil or not root:IsA("BasePart") then
 		return
 	end
 	-- Um exploit consegue disparar Touched de longe: vale a distância real.
@@ -262,9 +286,19 @@ onScrollTouched = function(part: BasePart, hit: BasePart)
 	groundScrolls[part] = nil
 	part:Destroy()
 
-	local head = character:FindFirstChild("Head")
-	local anchor = if head and head:IsA("BasePart") then head else root
-	startCarrying(player, character, anchor, scroll)
+	local rarity, phase, fromEvent = scroll.rarity, scroll.phase, scroll.fromEvent
+	startCarrying(player, carrier, anchor, rarity, function(placer: Player): (boolean, string?)
+		local ok, reason = WarriorService:AddScroll(placer, rarity)
+		if ok and not fromEvent then
+			countByPhase[phase] -= 1
+		end
+		return ok, reason
+	end, function()
+		-- Volta para o chão da fase de origem sem mudar a contagem.
+		if not spawnScroll(phase, rarity, fromEvent) and not fromEvent then
+			countByPhase[phase] -= 1
+		end
+	end)
 end
 
 local function onPlaceScroll(player: Player): (boolean, string)
@@ -280,20 +314,20 @@ local function onPlaceScroll(player: Player): (boolean, string)
 		return false, MESSAGES.NotCarrying
 	end
 
-	local ok, reason = WarriorService:AddScroll(player, carried.rarity)
-	if not ok then
-		if reason == "NoFreeSlot" then
-			local max = WarriorService:GetMaxSlots()
-			return false, `Sem espaço na base ({max}/{max})`
-		end
-		return false, MESSAGES[reason or ""] or "Não foi possível colocar o pergaminho"
+	local ok, reason = carried.onPlace(player)
+	if ok then
+		stopCarrying(player)
+		return true, "Colocado na sua base!"
 	end
-
-	stopCarrying(player)
-	if not carried.fromEvent then
-		countByPhase[carried.phase] -= 1
+	if reason == "Gone" then
+		stopCarrying(player)
+		return false, MESSAGES.Gone
 	end
-	return true, "Pergaminho colocado!"
+	if reason == "NoFreeSlot" then
+		local max = WarriorService:GetMaxSlots(player)
+		return false, `Sem espaço na base ({max}/{max})`
+	end
+	return false, MESSAGES[reason or ""] or "Não foi possível colocar"
 end
 
 local function trySpawnInPhase(phase: number): boolean
@@ -336,13 +370,6 @@ local function runLegendaryEvent()
 	end
 end
 
--- Só alimenta o botão "Colocar pergaminho" do cliente; quem decide é o PlaceScroll.
-local function updateBaseAttributes()
-	for player in carrying do
-		player:SetAttribute("InOwnBase", WarriorService:IsInPlacementArea(player))
-	end
-end
-
 function ScrollService:IsCarrying(player: Player): boolean
 	return carrying[player] ~= nil
 end
@@ -355,9 +382,23 @@ function ScrollService:GetCarriers(): { Player }
 	return list
 end
 
--- Tira o pergaminho do jogador e devolve para a fase de origem (ex.: guardião pegou).
+-- Tira o item do jogador como se ele tivesse perdido (ex.: guardião ou dono pegou).
 function ScrollService:DropCarried(player: Player)
 	loseCarried(player)
+end
+
+-- Faz o jogador carregar um item qualquer (ex.: roubado), com as regras de quem chama.
+-- false se ele já carrega algo ou não tem personagem vivo.
+function ScrollService:CarryItem(player: Player, rarity: string, onPlace: PlaceHandler, onLost: () -> ()): boolean
+	if carrying[player] or not Rarities[rarity] then
+		return false
+	end
+	local character, anchor = carryAnchor(player)
+	if character == nil or anchor == nil then
+		return false
+	end
+	startCarrying(player, character, anchor, rarity, onPlace, onLost)
+	return true
 end
 
 function ScrollService:Init()
@@ -420,12 +461,6 @@ function ScrollService:Start()
 	end
 
 	task.spawn(runLegendaryEvent)
-	task.spawn(function()
-		while true do
-			task.wait(BASE_CHECK_INTERVAL)
-			updateBaseAttributes()
-		end
-	end)
 end
 
 return ScrollService

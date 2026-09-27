@@ -117,7 +117,7 @@ Workspace.Map
 6. [x] Coleta de pergaminhos nas fases
 7. [x] Guardiões das fases
 8. [x] Esteira de velocidade
-9. [ ] Roubo entre jogadores
+9. [x] Roubo entre jogadores
 10. [ ] Upgrades
 11. [ ] Rebirth
 12. [ ] Monetização
@@ -161,13 +161,16 @@ Workspace.Map
   - API: `GetBase(player)` (índice `1..5` ou `nil`), `GetOwner(baseIndex)` (`Player?`), `GetPhaseAt(position)` (número da fase cujo volume `PhaseN` contém a posição, funcionando com a Part rotacionada, ou `nil`), `GetBaseArea(baseIndex)` (`CFrame?, Vector3?`: centro do piso da base, girado só no eixo vertical como o ringue, e o tamanho da área; Model usa a caixa do modelo, Part usa o tamanho da Part), `GetPhaseCount()` (maior `N` entre os `PhaseN`), `GetPhasePart(index)` (`BasePart?`), `GetBaseCount()`, `GetBaseInstance(index)` (o marcador `BaseN`).
 - `WarriorService` (`src/server/Services/WarriorService.luau`) pronto. Dados em `src/shared/Config/Rarities.luau` (cor, ordem, tempo de choca, faixa de renda) e `src/shared/Config/Warriors.luau` (36 guerreiros: 6 clãs × 6 raridades).
   - Os Ids de raridade (`Common`..`Secret`) e de guerreiro (ex.: `kaseri`) ficam salvos nos dados: não renomeie. `DisplayName` e `Name` podem mudar.
-  - `Slots` no `PlayerData`: chave `"1".."6"` → `{ Rarity, StartedAt, OffsetX, OffsetZ, WarriorId? }`. `StartedAt` é `os.time()`, então a chocagem continua offline. `OffsetX/Z` é a posição relativa ao centro da base (`GetBaseArea`), então continua certa se o jogador pegar outra base; se a base nova for menor, o slot é trazido pra dentro dela.
+  - `Slots` no `PlayerData`: chave `"1".."N"` → `{ Rarity, StartedAt, OffsetX, OffsetZ, WarriorId?, PlacedAt? }` (`PlacedAt` = quando foi colocado nesta base; usado na proteção contra roubo). `StartedAt` é `os.time()`, então a chocagem continua offline. `OffsetX/Z` é a posição relativa ao centro da base (`GetBaseArea`), então continua certa se o jogador pegar outra base; se a base nova for menor, o slot é trazido pra dentro dela.
   - A cada 1 s, para cada jogador carregado: termina as chocagens vencidas, sorteando um guerreiro da raridade (qualquer clã); soma a renda dos guerreiros e chama `CurrencyService:AddMoney`; atualiza o visual. A renda só corre com o dono no jogo.
   - Na inicialização, valida as configs: Ids únicos, raridade existente, renda inteira e dentro da faixa, pelo menos 1 guerreiro por raridade. Se algo falhar, dá erro e o `Start` não roda.
   - API:
     - `AddScroll(player, rarity, position?)`: retorna `(true)` ou `(false, motivo)`. Motivos: `NotLoaded`, `NoBase`, `NoPosition`, `OutsideBase`, `TooClose`, `NoFreeSlot`. Sem `position`, usa a posição atual do jogador. O servidor valida a posição: dentro da área do ringue do dono (`EDGE_MARGIN` da borda, altura perto do piso), a pelo menos `MIN_SLOT_DISTANCE` de outros slots, no máximo `SLOTS_PER_BASE` (6). Raridade inexistente dá `error()`.
     - `GetSlots(player)`: lista de `{ Index, Rarity, StartedAt, ReadyAt, WarriorId?, Offset }` em ordem de índice, ou `nil` se os dados não estiverem carregados.
-    - `GetMaxSlots()` e `IsInPlacementArea(player, position?)` (mesma regra de área do `AddScroll`, sem olhar distância nem espaço livre).
+    - `GetMaxSlots(player)` (`SLOTS_PER_BASE` + bônus registrados por `AddSlotBonus`) e `IsInPlacementArea(player, position?)` (mesma regra de área do `AddScroll`, sem olhar distância nem espaço livre).
+    - Extensões: `AddSlotBonus(fn)`, `AddIncomeMultiplier(fn)` (renda = soma × multiplicadores, arredondada pra baixo). Outros serviços registram aqui, para o `WarriorService` não depender deles.
+    - Roubo: `OnStealAttempt(fn)` (prompt "Roubar" de cada slot), `GetSlotInfo(owner, key)`, `GetSlotWorldPosition(owner, key)`, `LockSlot`/`UnlockSlot` (travado = invisível, sem renda, só em memória), `TransferSlot(owner, key, thief)` (cria no ladrão, na posição dele, e só então remove do dono; se o dono sumiu, desfaz).
+  - Mantém o atributo `InOwnBase` de todos os jogadores (a cada 0,25 s, via `IsInPlacementArea`), só para a UI.
   - Visual (só servidor, sem remotes): uma placa colorida pela raridade em cada slot, em `Workspace.WarriorSlots.<UserId>`, com um letreiro pequeno (visível até `LABEL_MAX_DISTANCE`). Chocando, mostra "Pergaminho", a raridade e o tempo restante; depois, o nome do guerreiro, a raridade e o `$/s`.
   - Ainda não existe: mutações, renda offline.
 - `ScrollService` (`src/server/Services/ScrollService.luau`) pronto. Config em `src/shared/Config/Phases.luau`: `Phases[N]` com pesos de raridade, `MaxScrolls` e `SpawnInterval` de cada fase; `LegendaryEvent`.
@@ -190,6 +193,14 @@ Workspace.Map
   - **Esteira:** uma por base. Usa o marcador `Treadmill` (Part) dentro do `BaseN` se existir; senão cria uma Part perto da borda +Z da área do ringue. É uma esteira rolante: `AssemblyLinearVelocity` no sentido do `LookVector` da Part, na mesma velocidade que o dono anda. Parado, o jogador sai dela; só fica em cima quem corre contra. Por isso "o dono está em cima" basta para treinar (a cada `TrainingTick`, `GainPerSecond` × multiplicadores), sem confiar no cliente. Treina só o dono da base.
   - **Modo de teste do Studio** (`src/shared/Config/StudioTest.luau`): agora aplicado aqui. Com `RunService:IsStudio()` e `Enabled = true`, `WalkSpeed = max(treinado, StudioTest.WalkSpeed)`. O `Speed` salvo só cresce na esteira, então o valor de teste nunca é salvo. O antigo `StudioTestService` foi removido.
   - API: `GetSpeed(player)`, `AddTrainingMultiplier(fn)` (outros serviços registram multiplicadores do treino).
+- `StealService` (`src/server/Services/StealService.luau`) pronto. Config em `src/shared/Config/Steal.luau`.
+  - Cada slot tem um `ProximityPrompt` "Roubar" (segurar 1 s). O cliente esconde o prompt nos próprios slots. O servidor valida: não é o dono; o dono está no jogo; o ladrão não carrega nada; rate limit (`AttemptRateLimit`); cooldown entre roubos (`CooldownSeconds`); distância real até o slot (`MaxStealDistance`); proteção após colocar (`ProtectionSeconds`, pelo `PlacedAt`).
+  - **O item nunca sai dos dados do dono antes da entrega.** Ao roubar, o slot do dono é travado em memória e o ladrão carrega um pergaminho da mesma raridade (`ScrollService:CarryItem`).
+    - Entregou no próprio ringue (botão "Colocar"): `TransferSlot`. O item é dele, com a mesma raridade, guerreiro e horário de chocagem.
+    - Morreu, foi pego por um guardião, o dono encostou nele (`CatchDistance`, checado a cada 0,25 s) ou saiu: o slot destrava e volta pro dono.
+    - O dono saiu no meio: o roubo é cancelado e o item fica salvo com o dono.
+  - O dono é avisado (`Notify`) no início, na entrega e na devolução.
+  - `ScrollService` passou a ter carga genérica: `CarryItem(player, rarity, onPlace, onLost)`. Os pergaminhos de fase usam o mesmo caminho.
 - `HudController` (`src/client/Controllers/HudController.luau`): mostra as mensagens do `Events.Notify`.
 - `ScrollController` (`src/client/Controllers/ScrollController.luau`): botão "Colocar pergaminho", que só aparece com `CarryingScroll` e `InOwnBase`, mensagem de resultado por 3 s, aviso do evento no chat (`TextChatService`, canal `RBXGeneral`) e giro dos pergaminhos no chão.
 - Nenhum outro sistema de gameplay implementado ainda.

@@ -113,6 +113,25 @@ function ScrollController:Start()
 		end
 	end)
 
+	-- Prompt "Roubar" nos próprios slots não faz sentido: some só na tela do dono.
+	-- (O servidor recusaria de qualquer jeito.)
+	local function hideIfOwn(instance: Instance)
+		if not instance:IsA("ProximityPrompt") or instance:GetAttribute("OwnerUserId") ~= player.UserId then
+			return
+		end
+		instance.Enabled = false
+		instance:GetPropertyChangedSignal("Enabled"):Connect(function()
+			if instance.Enabled then
+				instance.Enabled = false
+			end
+		end)
+	end
+	local warriorSlots = Workspace:WaitForChild("WarriorSlots")
+	warriorSlots.DescendantAdded:Connect(hideIfOwn)
+	for _, descendant in warriorSlots:GetDescendants() do
+		hideIfOwn(descendant)
+	end
+
 	-- Giro só local: girar no servidor mandaria a posição de todos os pergaminhos pela rede.
 	local scrolls = Workspace:WaitForChild("PhaseScrolls")
 	RunService.RenderStepped:Connect(function(dt: number)

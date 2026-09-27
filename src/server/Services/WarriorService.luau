@@ -1,11 +1,16 @@
 --!strict
 
--- Pergaminhos, chocagem e guerreiros. Cada jogador tem até SLOTS_PER_BASE slots,
--- colocados em qualquer ponto do próprio ringue. Um pergaminho entregue ocupa um
--- slot e choca por um tempo que depende da raridade; o início é salvo como
--- horário (os.time()), então a chocagem continua com o jogador offline. Ao
--- terminar, vira um guerreiro sorteado daquela raridade, que gera dinheiro por
--- segundo enquanto o dono está no jogo.
+-- Pergaminhos, chocagem e guerreiros. Cada jogador tem um número de slots
+-- (SLOTS_PER_BASE + bônus de upgrades/Game Pass), colocados em qualquer ponto do
+-- próprio ringue. Um pergaminho entregue ocupa um slot e choca por um tempo que
+-- depende da raridade; o início é salvo como horário (os.time()), então a
+-- chocagem continua com o jogador offline. Ao terminar, vira um guerreiro
+-- sorteado daquela raridade, que gera dinheiro por segundo enquanto o dono está
+-- no jogo.
+--
+-- Roubo: um slot pode ser travado em memória enquanto alguém o carrega. Travado,
+-- ele some do ringue e não rende, mas continua nos dados do dono até a entrega
+-- (TransferSlot) ou até ser destravado (UnlockSlot).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,6 +19,7 @@ local Workspace = game:GetService("Workspace")
 local Config = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config")
 local Rarities = require(Config:WaitForChild("Rarities"))
 local Warriors = require(Config:WaitForChild("Warriors"))
+local StealConfig = require(Config:WaitForChild("Steal"))
 
 local BaseService = require(script.Parent.BaseService)
 local CurrencyService = require(script.Parent.CurrencyService)
@@ -21,7 +27,7 @@ local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local WarriorService = {}
 
--- Limite de slots por base; vira valor por jogador quando existirem upgrades.
+-- Slots de todo jogador; upgrades e Game Pass somam por AddSlotBonus.
 local SLOTS_PER_BASE = 6
 -- Distância mínima (studs, no chão) entre dois slots do mesmo jogador.
 local MIN_SLOT_DISTANCE = 6
@@ -32,32 +38,42 @@ local MAX_BELOW_FLOOR = 4
 local MAX_ABOVE_FLOOR = 12
 -- Os letreiros dos slots só aparecem de perto.
 local LABEL_MAX_DISTANCE = 60
+-- Checagem de "está no próprio ringue" (atributo InOwnBase, só pra UI).
+local BASE_CHECK_INTERVAL = 0.25
 
 type Warrior = Warriors.Warrior
 
 -- Como fica salvo em PlayerData.Slots, com a chave "1".."N".
 -- OffsetX/OffsetZ: posição relativa ao centro da base (BaseService:GetBaseArea).
+-- PlacedAt: quando foi colocado nesta base (proteção contra roubo); ausente em slots antigos.
 type SlotData = {
 	Rarity: string,
 	StartedAt: number,
 	OffsetX: number,
 	OffsetZ: number,
 	WarriorId: string?,
+	PlacedAt: number?,
 }
 
 type SlotsData = { [string]: SlotData }
 
 export type SlotInfo = {
 	Index: number,
+	Key: string,
 	Rarity: string,
 	StartedAt: number,
 	ReadyAt: number,
+	PlacedAt: number,
 	WarriorId: string?, -- nil enquanto choca
 	Offset: Vector3, -- relativo ao centro da base; Y sempre 0
 }
 
+export type StealHandler = (thief: Player, owner: Player, key: string) -> ()
+
 type SlotVisual = {
 	part: Part,
+	billboard: BillboardGui,
+	prompt: ProximityPrompt,
 	nameLabel: TextLabel,
 	rarityLabel: TextLabel,
 	statusLabel: TextLabel,
@@ -71,6 +87,10 @@ type PlayerVisuals = {
 local warriorsById: { [string]: Warrior } = {}
 local warriorsByRarity: { [string]: { Warrior } } = {}
 local visualsByPlayer: { [Player]: PlayerVisuals } = {}
+local lockedSlots: { [Player]: { [string]: boolean } } = {}
+local slotBonusProviders: { (Player) -> number } = {}
+local incomeMultiplierProviders: { (Player) -> number } = {}
+local stealHandlers: { StealHandler } = {}
 local warnedAbout: { [string]: boolean } = {}
 local visualsRoot: Folder? = nil
 local random = Random.new()
@@ -111,6 +131,27 @@ end
 
 local function getSlots(player: Player): SlotsData?
 	return PlayerDataService:Get(player, "Slots")
+end
+
+local function isLocked(owner: Player, key: string): boolean
+	local locks = lockedSlots[owner]
+	return locks ~= nil and locks[key] == true
+end
+
+local function maxSlots(player: Player): number
+	local total = SLOTS_PER_BASE
+	for _, provider in slotBonusProviders do
+		total += provider(player)
+	end
+	return total
+end
+
+local function incomeMultiplier(player: Player): number
+	local multiplier = 1
+	for _, provider in incomeMultiplierProviders do
+		multiplier *= provider(player)
+	end
+	return multiplier
 end
 
 local function getArea(player: Player): (CFrame?, Vector3?)
@@ -156,6 +197,87 @@ local function clampOffset(areaSize: Vector3, x: number, z: number): (number, nu
 	return math.clamp(x, -limitX, limitX), math.clamp(z, -limitZ, limitZ)
 end
 
+local function toInfo(key: string, slot: SlotData): SlotInfo?
+	local index = tonumber(key)
+	if index == nil then
+		return nil
+	end
+	return {
+		Index = index,
+		Key = key,
+		Rarity = slot.Rarity,
+		StartedAt = slot.StartedAt,
+		ReadyAt = readyAt(slot) or slot.StartedAt,
+		PlacedAt = slot.PlacedAt or 0,
+		WarriorId = slot.WarriorId,
+		Offset = Vector3.new(slot.OffsetX, 0, slot.OffsetZ),
+	}
+end
+
+-- Valida a posição e grava um slot novo no primeiro espaço livre.
+-- makeRecord recebe o offset validado e devolve o registro a salvar.
+-- Retorna (true, nil, chave) ou (false, motivo).
+local function placeRecord(
+	player: Player,
+	position: Vector3?,
+	makeRecord: (offsetX: number, offsetZ: number) -> SlotData
+): (boolean, string?, string?)
+	if not PlayerDataService:IsLoaded(player) then
+		return false, "NotLoaded", nil
+	end
+
+	local areaCFrame, areaSize = getArea(player)
+	if not areaCFrame or not areaSize then
+		return false, "NoBase", nil
+	end
+
+	local target = resolvePosition(player, position)
+	if target == nil then
+		return false, "NoPosition", nil
+	end
+	if not isFiniteVector(target) then
+		return false, "OutsideBase", nil
+	end
+
+	local offset = toOffset(areaCFrame, areaSize, target)
+	if offset == nil then
+		return false, "OutsideBase", nil
+	end
+	local offsetX, offsetZ = offset.X, offset.Z
+	local limit = maxSlots(player)
+
+	local reason: string? = nil
+	local placedKey: string? = nil
+	local updated = PlayerDataService:Update(player, "Slots", function(slots: SlotsData): SlotsData
+		for _, slot in slots do
+			if Vector2.new(slot.OffsetX - offsetX, slot.OffsetZ - offsetZ).Magnitude < MIN_SLOT_DISTANCE then
+				reason = "TooClose"
+				return slots
+			end
+		end
+
+		for index = 1, limit do
+			local key = tostring(index)
+			if not slots[key] then
+				slots[key] = makeRecord(offsetX, offsetZ)
+				placedKey = key
+				return slots
+			end
+		end
+
+		reason = "NoFreeSlot"
+		return slots
+	end)
+
+	if not updated then
+		return false, "NotLoaded", nil
+	end
+	if reason then
+		return false, reason, nil
+	end
+	return true, nil, placedKey
+end
+
 local function formatDuration(seconds: number): string
 	local total = math.max(0, math.floor(seconds))
 	local hours = math.floor(total / 3600)
@@ -181,7 +303,7 @@ local function newLabel(name: string, order: number, parent: Instance): TextLabe
 	return label
 end
 
-local function createSlotVisual(key: string, parent: Instance): SlotVisual
+local function createSlotVisual(owner: Player, key: string, parent: Instance): SlotVisual
 	local part = Instance.new("Part")
 	part.Name = `Slot{key}`
 	part.Anchored = true
@@ -212,8 +334,25 @@ local function createSlotVisual(key: string, parent: Instance): SlotVisual
 	rarityLabel.TextStrokeColor3 = Color3.fromRGB(255, 255, 255)
 	rarityLabel.TextStrokeTransparency = 0.2
 
+	-- O cliente esconde este prompt nos slots do próprio jogador (OwnerUserId).
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "StealPrompt"
+	prompt.ActionText = "Roubar"
+	prompt.HoldDuration = StealConfig.PromptHoldSeconds
+	prompt.MaxActivationDistance = StealConfig.MaxStealDistance
+	prompt.RequiresLineOfSight = false
+	prompt:SetAttribute("OwnerUserId", owner.UserId)
+	prompt.Parent = part
+	prompt.Triggered:Connect(function(thief: Player)
+		for _, handler in stealHandlers do
+			task.spawn(handler, thief, owner, key)
+		end
+	end)
+
 	return {
 		part = part,
+		billboard = billboard,
+		prompt = prompt,
 		nameLabel = newLabel("Name", 1, billboard),
 		rarityLabel = rarityLabel,
 		statusLabel = newLabel("Status", 3, billboard),
@@ -254,9 +393,15 @@ local function renderSlots(player: Player, slots: SlotsData, now: number)
 	for key, slot in slots do
 		local visual = visuals.slots[key]
 		if not visual then
-			visual = createSlotVisual(key, visuals.folder)
+			visual = createSlotVisual(player, key, visuals.folder)
 			visuals.slots[key] = visual
 		end
+
+		-- Travado (sendo roubado): some do ringue até voltar ou ser entregue.
+		local locked = isLocked(player, key)
+		visual.part.Transparency = if locked then 1 else 0
+		visual.billboard.Enabled = not locked
+		visual.prompt.Enabled = not locked
 
 		local x, z = clampOffset(areaSize, slot.OffsetX, slot.OffsetZ)
 		-- Placa apoiada no piso, um fio acima pra não dar z-fighting.
@@ -273,10 +418,12 @@ local function renderSlots(player: Player, slots: SlotsData, now: number)
 			local warrior = warriorsById[warriorId]
 			visual.nameLabel.Text = if warrior then warrior.Name else "?"
 			visual.statusLabel.Text = `${if warrior then warrior.IncomePerSecond else 0}/s`
+			visual.prompt.ObjectText = if warrior then warrior.Name else "Guerreiro"
 		else
 			local ready = readyAt(slot)
 			visual.nameLabel.Text = "Pergaminho"
 			visual.statusLabel.Text = if ready then `Chocando {formatDuration(ready - now)}` else "Chocando"
+			visual.prompt.ObjectText = "Pergaminho"
 		end
 	end
 
@@ -319,11 +466,11 @@ local function completeHatching(player: Player, slots: SlotsData, now: number)
 	end)
 end
 
-local function incomeOf(slots: SlotsData): number
+local function incomeOf(player: Player, slots: SlotsData): number
 	local total = 0
-	for _, slot in slots do
+	for key, slot in slots do
 		local warriorId = slot.WarriorId
-		if warriorId then
+		if warriorId and not isLocked(player, key) then
 			local warrior = warriorsById[warriorId]
 			if warrior then
 				total += warrior.IncomePerSecond
@@ -347,7 +494,7 @@ local function tickPlayer(player: Player, now: number)
 		return
 	end
 
-	local income = incomeOf(slots)
+	local income = math.floor(incomeOf(player, slots) * incomeMultiplier(player))
 	if income > 0 then
 		CurrencyService:AddMoney(player, income)
 	end
@@ -387,7 +534,10 @@ function WarriorService:Init()
 end
 
 function WarriorService:Start()
-	Players.PlayerRemoving:Connect(clearVisuals)
+	Players.PlayerRemoving:Connect(function(player: Player)
+		clearVisuals(player)
+		lockedSlots[player] = nil
+	end)
 
 	task.spawn(function()
 		while true do
@@ -406,6 +556,16 @@ function WarriorService:Start()
 			end
 		end
 	end)
+
+	-- Atributo InOwnBase: só alimenta a UI (botões da base); o servidor não confia nele.
+	task.spawn(function()
+		while true do
+			task.wait(BASE_CHECK_INTERVAL)
+			for _, player in Players:GetPlayers() do
+				player:SetAttribute("InOwnBase", WarriorService:IsInPlacementArea(player))
+			end
+		end
+	end)
 end
 
 -- Coloca um pergaminho num slot livre do ringue do jogador. position = nil usa a
@@ -415,66 +575,15 @@ function WarriorService:AddScroll(player: Player, rarity: string, position: Vect
 	if not Rarities[rarity] then
 		error(`[WarriorService] Raridade inválida: '{rarity}'`, 2)
 	end
-	if not PlayerDataService:IsLoaded(player) then
-		return false, "NotLoaded"
-	end
-
-	local areaCFrame, areaSize = getArea(player)
-	if not areaCFrame or not areaSize then
-		return false, "NoBase"
-	end
-
-	local target = resolvePosition(player, position)
-	if target == nil then
-		return false, "NoPosition"
-	end
-	if not isFiniteVector(target) then
-		return false, "OutsideBase"
-	end
-
-	local offset = toOffset(areaCFrame, areaSize, target)
-	if offset == nil then
-		return false, "OutsideBase"
-	end
-	local offsetX, offsetZ = offset.X, offset.Z
-
-	local reason: string? = nil
-	local updated = PlayerDataService:Update(player, "Slots", function(slots: SlotsData): SlotsData
-		for _, slot in slots do
-			if Vector2.new(slot.OffsetX - offsetX, slot.OffsetZ - offsetZ).Magnitude < MIN_SLOT_DISTANCE then
-				reason = "TooClose"
-				return slots
-			end
-		end
-
-		for index = 1, SLOTS_PER_BASE do
-			local key = tostring(index)
-			if not slots[key] then
-				slots[key] = {
-					Rarity = rarity,
-					StartedAt = os.time(),
-					OffsetX = offsetX,
-					OffsetZ = offsetZ,
-				}
-				return slots
-			end
-		end
-
-		reason = "NoFreeSlot"
-		return slots
+	local ok, reason = placeRecord(player, position, function(offsetX: number, offsetZ: number): SlotData
+		local now = os.time()
+		return { Rarity = rarity, StartedAt = now, OffsetX = offsetX, OffsetZ = offsetZ, PlacedAt = now }
 	end)
-
-	if not updated then
-		return false, "NotLoaded"
-	end
-	if reason then
-		return false, reason
-	end
-	return true, nil
+	return ok, reason
 end
 
-function WarriorService:GetMaxSlots(): number
-	return SLOTS_PER_BASE
+function WarriorService:GetMaxSlots(player: Player): number
+	return maxSlots(player)
 end
 
 -- Se a posição (ou a posição atual do jogador) está na área do próprio ringue onde
@@ -497,22 +606,114 @@ function WarriorService:GetSlots(player: Player): { SlotInfo }?
 
 	local list: { SlotInfo } = {}
 	for key, slot in slots do
-		local index = tonumber(key)
-		if index then
-			table.insert(list, {
-				Index = index,
-				Rarity = slot.Rarity,
-				StartedAt = slot.StartedAt,
-				ReadyAt = readyAt(slot) or slot.StartedAt,
-				WarriorId = slot.WarriorId,
-				Offset = Vector3.new(slot.OffsetX, 0, slot.OffsetZ),
-			})
+		local info = toInfo(key, slot)
+		if info then
+			table.insert(list, info)
 		end
 	end
 	table.sort(list, function(a, b)
 		return a.Index < b.Index
 	end)
 	return list
+end
+
+function WarriorService:GetSlotInfo(owner: Player, key: string): SlotInfo?
+	local slots = getSlots(owner)
+	local slot = if slots then slots[key] else nil
+	return if slot then toInfo(key, slot) else nil
+end
+
+-- Posição no mundo do slot (como aparece no ringue), ou nil.
+function WarriorService:GetSlotWorldPosition(owner: Player, key: string): Vector3?
+	local slots = getSlots(owner)
+	local slot = if slots then slots[key] else nil
+	local areaCFrame, areaSize = getArea(owner)
+	if slot == nil or not areaCFrame or not areaSize then
+		return nil
+	end
+	local x, z = clampOffset(areaSize, slot.OffsetX, slot.OffsetZ)
+	return areaCFrame * Vector3.new(x, 0, z)
+end
+
+-- Trava o slot para roubo (some e não rende). false se não existe ou já está travado.
+function WarriorService:LockSlot(owner: Player, key: string): boolean
+	local slots = getSlots(owner)
+	if slots == nil or not slots[key] or isLocked(owner, key) then
+		return false
+	end
+	local locks = lockedSlots[owner]
+	if locks == nil then
+		locks = {}
+		lockedSlots[owner] = locks
+	end
+	locks[key] = true
+	return true
+end
+
+function WarriorService:UnlockSlot(owner: Player, key: string)
+	local locks = lockedSlots[owner]
+	if locks then
+		locks[key] = nil
+	end
+end
+
+-- Entrega um slot travado do dono para o ladrão, na posição atual do ladrão.
+-- Primeiro cria no ladrão (com as validações de sempre) e só então remove do dono.
+-- Retorna (true) ou (false, motivo); "Gone" = o slot não existe mais.
+function WarriorService:TransferSlot(owner: Player, key: string, thief: Player): (boolean, string?)
+	local ownerSlots = getSlots(owner)
+	local record = if ownerSlots then ownerSlots[key] else nil
+	if record == nil then
+		WarriorService:UnlockSlot(owner, key)
+		return false, "Gone"
+	end
+
+	local ok, reason, thiefKey = placeRecord(thief, nil, function(offsetX: number, offsetZ: number): SlotData
+		return {
+			Rarity = record.Rarity,
+			StartedAt = record.StartedAt,
+			WarriorId = record.WarriorId,
+			OffsetX = offsetX,
+			OffsetZ = offsetZ,
+			PlacedAt = os.time(),
+		}
+	end)
+	if not ok then
+		return false, reason
+	end
+
+	local removed = PlayerDataService:Update(owner, "Slots", function(slots: SlotsData): SlotsData
+		slots[key] = nil
+		return slots
+	end)
+	if not removed then
+		-- Dono saiu no meio: desfaz no ladrão pra não duplicar o item.
+		PlayerDataService:Update(thief, "Slots", function(slots: SlotsData): SlotsData
+			if thiefKey then
+				slots[thiefKey] = nil
+			end
+			return slots
+		end)
+		return false, "Gone"
+	end
+
+	WarriorService:UnlockSlot(owner, key)
+	return true, nil
+end
+
+-- Chamado quando alguém ativa o prompt "Roubar" de um slot (quem valida é o handler).
+function WarriorService:OnStealAttempt(handler: StealHandler)
+	table.insert(stealHandlers, handler)
+end
+
+-- Bônus de slots por jogador (upgrades, Game Pass).
+function WarriorService:AddSlotBonus(provider: (Player) -> number)
+	table.insert(slotBonusProviders, provider)
+end
+
+-- Multiplicador de renda por jogador (upgrades, rebirth, Game Pass).
+function WarriorService:AddIncomeMultiplier(provider: (Player) -> number)
+	table.insert(incomeMultiplierProviders, provider)
 end
 
 return WarriorService
