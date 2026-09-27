@@ -20,6 +20,8 @@ Remotes.Functions = {
 	PlaceScroll = "PlaceScroll",
 	-- Cliente -> servidor (upgradeId: string): comprar o próximo nível de um upgrade.
 	BuyUpgrade = "BuyUpgrade",
+	-- Cliente -> servidor, sem argumentos: fazer rebirth.
+	Rebirth = "Rebirth",
 } :: { [string]: string }
 
 local function createAll(folder: Folder, className: "RemoteEvent" | "RemoteFunction", names: { [string]: string })

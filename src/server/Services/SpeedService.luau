@@ -84,6 +84,8 @@ local function applySpeed(player: Player)
 		return
 	end
 	getSpeedValue(player).Value = math.floor(getSpeed(player))
+	-- Só para o HUD; o servidor nunca lê de volta.
+	player:SetAttribute("Speed", math.floor(getSpeed(player)))
 
 	local character = player.Character
 	local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil

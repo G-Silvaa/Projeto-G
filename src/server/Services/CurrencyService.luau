@@ -1,5 +1,8 @@
 --!strict
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Format = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Format"))
 local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local CurrencyService = {}
@@ -25,13 +28,17 @@ local function getLeaderstats(player: Player): Folder
 	return folder
 end
 
-local function getMoneyValue(leaderstats: Folder): IntValue
+-- StringValue formatado ("1.5K", "2.3M"...): um IntValue estoura em ~2,1 bilhões.
+local function getMoneyValue(leaderstats: Folder): StringValue
 	local existing = leaderstats:FindFirstChild("Money")
+	if existing and existing:IsA("StringValue") then
+		return existing
+	end
 	if existing then
-		return existing :: IntValue
+		existing:Destroy()
 	end
 
-	local value = Instance.new("IntValue")
+	local value = Instance.new("StringValue")
 	value.Name = "Money"
 	value.Parent = leaderstats
 	return value
@@ -43,8 +50,9 @@ local function syncDisplay(player: Player)
 		return
 	end
 
-	local moneyValue = getMoneyValue(getLeaderstats(player))
-	moneyValue.Value = money
+	getMoneyValue(getLeaderstats(player)).Value = Format.number(money)
+	-- Número exato só para o HUD mostrar; o servidor nunca lê de volta.
+	player:SetAttribute("Money", money)
 end
 
 function CurrencyService:Start()

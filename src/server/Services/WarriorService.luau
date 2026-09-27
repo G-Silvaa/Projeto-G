@@ -701,6 +701,12 @@ function WarriorService:TransferSlot(owner: Player, key: string, thief: Player):
 	return true, nil
 end
 
+-- Rebirth: apaga todos os slots do jogador (e as travas de roubo deles).
+function WarriorService:ResetSlots(player: Player): boolean
+	lockedSlots[player] = nil
+	return PlayerDataService:Set(player, "Slots", {})
+end
+
 -- Chamado quando alguém ativa o prompt "Roubar" de um slot (quem valida é o handler).
 function WarriorService:OnStealAttempt(handler: StealHandler)
 	table.insert(stealHandlers, handler)

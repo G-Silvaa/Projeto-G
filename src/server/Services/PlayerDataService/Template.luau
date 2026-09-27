@@ -11,6 +11,8 @@ local Template: { [string]: any } = {
 	Speed = 0,
 	-- Níveis dos upgrades: { [Id]: nível } (Id de Config/Upgrades); ver UpgradeService.
 	Upgrades = {},
+	-- Quantos rebirths o jogador fez; ver RebirthService.
+	Rebirths = 0,
 }
 
 return table.freeze(Template)

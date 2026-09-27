@@ -119,7 +119,7 @@ Workspace.Map
 8. [x] Esteira de velocidade
 9. [x] Roubo entre jogadores
 10. [x] Upgrades
-11. [ ] Rebirth
+11. [x] Rebirth
 12. [ ] Monetização
 
 ## Forma de trabalhar
@@ -137,18 +137,18 @@ Workspace.Map
 - Estrutura base pronta:
   - `Main.server.luau` chama `Remotes.setup()`, carrega os ModuleScripts de `Services/` (outros tipos de filho são ignorados), chama `Init()` em ordem alfabética e depois `Start()` em `task.spawn`. Os dois métodos são opcionais e chamados com `:`. Erro em um serviço gera `warn` e não derruba os outros; se o `Init` falhar, o `Start` daquele serviço não roda.
   - `Main.client.luau` faz o mesmo com `Controllers/`.
-  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor); `getEvent(name)` / `getFunction(name)` nos dois lados. Hoje: `Functions.PlaceScroll`, `Functions.BuyUpgrade` (ver `UpgradeService`), `Events.Announcement` (ver `ScrollService`) e `Events.Notify` (mensagem curta do servidor para um jogador, mostrada pelo `HudController`).
+  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor); `getEvent(name)` / `getFunction(name)` nos dois lados. Hoje: `Functions.PlaceScroll`, `Functions.Rebirth` (ver `RebirthService`), `Functions.BuyUpgrade` (ver `UpgradeService`), `Events.Announcement` (ver `ScrollService`) e `Events.Notify` (mensagem curta do servidor para um jogador, mostrada pelo `HudController`).
   - `src/shared/Config/init.luau` contém só a versão (`0.0.1`).
   - `src/shared/Format.luau`: `Format.number(n)` → "950", "1.5K", "2.3M", "4.1B"... (servidor e cliente).
 - `PlayerDataService` (`src/server/Services/PlayerDataService/`) pronto:
   - Uma chave por jogador (`Player_<UserId>`) com `{ Data, Lock }`. Session lock via `UpdateAsync`: o lock expira em 180 s sem renovação; um servidor só grava se o lock for dele e, se não for, kicka o jogador.
   - Load com 5 tentativas (5 s entre elas); se falhar, kicka e não salva. Autosave a cada 60 s, save + liberação do lock ao sair e no `BindToClose`.
-  - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load), `Money`, `Slots` (ver `WarriorService`), `Speed` (ver `SpeedService`), `Upgrades` (ver `UpgradeService`).
+  - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load), `Money`, `Slots` (ver `WarriorService`), `Speed` (ver `SpeedService`), `Upgrades` (ver `UpgradeService`), `Rebirths` (ver `RebirthService`).
   - API (outros serviços usam `require(script.Parent.PlayerDataService)`): `IsLoaded(player)`, `Get(player, key)` (tabelas vêm como cópia), `Set(player, key, value)`, `Update(player, key, fn)` (o `fn` não pode yieldar), `OnPlayerLoaded(callback)`. `Set`/`Update` retornam `false` se o jogador não estiver carregado e dão erro se a chave não existir no template, se for `DataVersion` ou se o tipo for diferente.
 - `CurrencyService` (`src/server/Services/CurrencyService.luau`) pronto:
   - `Money` (inteiro, `>= 0`) no template do `PlayerDataService`; chave nova de nível de cima, preenchida sozinha nos dados antigos, sem precisar de migração.
   - API: `GetMoney(player)` (`number?`), `AddMoney(player, amount)`, `RemoveMoney(player, amount)` (`boolean`, `false` se saldo insuficiente ou jogador não carregado). `amount` negativo, não-inteiro, NaN ou infinito faz `error()` — é bug de quem chamou, não estado de jogo.
-  - Saldo mostrado via `leaderstats` (`IntValue "Money"` em `player.leaderstats`), sincronizado pelo servidor a cada mudança; nenhum código de cliente.
+  - Saldo mostrado no `leaderstats` como **`StringValue` formatado** (`Format.number`: 1.5K, 2.3M, 4.1B), porque um `IntValue` estoura em ~2,1 bilhões. O atributo numérico `Money` no `Player` alimenta o HUD. O dado salvo continua sendo o número.
   - Sem remotes: nada neste sistema é iniciado pelo cliente ainda.
 - `BaseService` (`src/server/Services/BaseService.luau`) pronto. Ele não gera geometria: só lê os marcadores de `Workspace.Map` (ver a seção "Mapa").
   - Cada marcador `Base1..Base5` (quantidade em `BASE_COUNT`, no topo do `BaseService`) pode ser `Model` (o ringue) ou `Part`.
@@ -208,6 +208,11 @@ Workspace.Map
   - Efeitos registrados nos serviços que os aplicam: `WarriorService:AddSlotBonus`, `WarriorService:AddIncomeMultiplier`, `SpeedService:AddTrainingMultiplier`.
   - API: `GetLevel(player, id)`, `ResetAll(player)` (usado pelo rebirth).
 - `ShopController` (`src/client/Controllers/ShopController.luau`): botão "Loja", que só aparece com `InOwnBase`, e painel com os upgrades (nível, efeito, preço formatado, "Comprar" e mensagem do servidor).
-- `HudController` (`src/client/Controllers/HudController.luau`): mostra as mensagens do `Events.Notify`.
+- `RebirthService` (`src/server/Services/RebirthService.luau`) pronto. Config em `src/shared/Config/Rebirth.luau`: custo `floor(1M × 3^rebirths)`, multiplicador de renda `1 + 0,5 × rebirths` (`CostFor`/`MultiplierFor`, os mesmos no servidor e no cliente).
+  - Remote `Functions.Rebirth` (sem argumentos). O servidor valida rate limit (1 s), dados carregados e Money ≥ custo.
+  - O rebirth zera o Money (o saldo inteiro), os guerreiros (`WarriorService:ResetSlots`) e os upgrades (`UpgradeService:ResetAll`) e soma 1 em `Rebirths`. O Speed não é zerado.
+  - Multiplicador registrado em `WarriorService:AddIncomeMultiplier`. Atributo `Rebirths` no `Player`, para o HUD.
+  - Se alguém estava carregando um item roubado deste jogador, ao entregar recebe "Esse item não existe mais". Não duplica.
+- `HudController` (`src/client/Controllers/HudController.luau`): painel com Money (formatado), Velocidade e Rebirths (atributos `Money`, `Speed`, `Rebirths`); botão "Rebirth" com o custo e confirmação em dois cliques; mensagens do `Events.Notify`.
 - `ScrollController` (`src/client/Controllers/ScrollController.luau`): botão "Colocar pergaminho", que só aparece com `CarryingScroll` e `InOwnBase`, mensagem de resultado por 3 s, aviso do evento no chat (`TextChatService`, canal `RBXGeneral`) e giro dos pergaminhos no chão.
 - Nenhum outro sistema de gameplay implementado ainda.
