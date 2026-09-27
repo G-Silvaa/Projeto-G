@@ -61,7 +61,7 @@ Se criar uma nova pasta raiz fora dessas, atualize o `default.project.json`.
 
 1. [x] Estrutura base (Main server/client, Remotes, Config)
 2. [x] PlayerData + DataStore
-3. [ ] Currency (dinheiro)
+3. [x] Currency (dinheiro)
 4. [ ] Bases dos jogadores
 5. [ ] Criaturas (definições + geração de renda)
 6. [ ] Captura
@@ -93,4 +93,9 @@ Se criar uma nova pasta raiz fora dessas, atualize o `default.project.json`.
   - Load com 5 tentativas (5 s entre elas); se falhar, kicka e não salva. Autosave a cada 60 s, save + liberação do lock ao sair e no `BindToClose`.
   - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load).
   - API (outros serviços usam `require(script.Parent.PlayerDataService)`): `IsLoaded(player)`, `Get(player, key)` (tabelas vêm como cópia), `Set(player, key, value)`, `Update(player, key, fn)` (o `fn` não pode yieldar), `OnPlayerLoaded(callback)`. `Set`/`Update` retornam `false` se o jogador não estiver carregado e dão erro se a chave não existir no template, se for `DataVersion` ou se o tipo for diferente.
-- Nenhum sistema de gameplay implementado ainda.
+- `CurrencyService` (`src/server/Services/CurrencyService.luau`) pronto:
+  - `Money` (inteiro, `>= 0`) no template do `PlayerDataService`; chave nova de nível de cima, preenchida sozinha nos dados antigos, sem precisar de migração.
+  - API: `GetMoney(player)` (`number?`), `AddMoney(player, amount)`, `RemoveMoney(player, amount)` (`boolean`, `false` se saldo insuficiente ou jogador não carregado). `amount` negativo, não-inteiro, NaN ou infinito faz `error()` — é bug de quem chamou, não estado de jogo.
+  - Saldo mostrado via `leaderstats` (`IntValue "Money"` em `player.leaderstats`), sincronizado pelo servidor a cada mudança; nenhum código de cliente.
+  - Sem remotes: nada neste sistema é iniciado pelo cliente ainda.
+- Nenhum outro sistema de gameplay implementado ainda.
