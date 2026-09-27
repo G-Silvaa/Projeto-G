@@ -22,6 +22,8 @@ Remotes.Functions = {
 	BuyUpgrade = "BuyUpgrade",
 	-- Cliente -> servidor, sem argumentos: fazer rebirth.
 	Rebirth = "Rebirth",
+	-- Cliente -> servidor (kind: "Pass" | "Product", key: string): abrir a compra com Robux.
+	PromptPurchase = "PromptPurchase",
 } :: { [string]: string }
 
 local function createAll(folder: Folder, className: "RemoteEvent" | "RemoteFunction", names: { [string]: string })

@@ -13,6 +13,8 @@ local Template: { [string]: any } = {
 	Upgrades = {},
 	-- Quantos rebirths o jogador fez; ver RebirthService.
 	Rebirths = 0,
+	-- Compras de Developer Product já entregues: { [PurchaseId]: os.time() }; ver MonetizationService.
+	ProcessedReceipts = {},
 }
 
 return table.freeze(Template)

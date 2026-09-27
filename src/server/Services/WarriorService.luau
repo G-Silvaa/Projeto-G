@@ -707,6 +707,38 @@ function WarriorService:ResetSlots(player: Player): boolean
 	return PlayerDataService:Set(player, "Slots", {})
 end
 
+function WarriorService:HasHatching(player: Player): boolean
+	local slots = getSlots(player)
+	if slots == nil then
+		return false
+	end
+	for _, slot in slots do
+		if slot.WarriorId == nil then
+			return true
+		end
+	end
+	return false
+end
+
+-- Termina agora todas as chocagens em andamento (produto "Pular chocagem").
+-- O sorteio acontece no próximo tick, como em qualquer chocagem vencida.
+-- Retorna quantas foram adiantadas.
+function WarriorService:SkipHatching(player: Player): number
+	local skipped = 0
+	local now = os.time()
+	PlayerDataService:Update(player, "Slots", function(slots: SlotsData): SlotsData
+		for _, slot in slots do
+			local rarity = Rarities[slot.Rarity]
+			if slot.WarriorId == nil and rarity then
+				slot.StartedAt = math.min(slot.StartedAt, now - rarity.HatchSeconds)
+				skipped += 1
+			end
+		end
+		return slots
+	end)
+	return skipped
+end
+
 -- Chamado quando alguém ativa o prompt "Roubar" de um slot (quem valida é o handler).
 function WarriorService:OnStealAttempt(handler: StealHandler)
 	table.insert(stealHandlers, handler)
