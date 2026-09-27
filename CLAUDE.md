@@ -54,11 +54,13 @@ Se criar uma nova pasta raiz fora dessas, atualize o `default.project.json`.
 - Salvar ao sair, em `BindToClose` e em autosave periódico.
 - Tratar falhas com retry e não sobrescrever dados se o carregamento falhou.
 - Versionar o formato dos dados (`DataVersion`) para migrações futuras.
+- Template em `src/server/Services/PlayerDataService/Template.luau`. Chave nova no nível de cima é preenchida sozinha nos dados antigos (chaves aninhadas não). Renomear, remover ou mudar o tipo de uma chave exige subir `DataVersion` e adicionar `Migrations[n]` (n → n+1) no `init.luau`.
+- No Studio o DataStore é `PlayerData_Studio`; no jogo publicado, `PlayerData`. Para funcionar no Studio, o place precisa estar publicado e com *Game Settings → Security → Enable Studio Access to API Services* ativado.
 
 ## Sistemas planejados (em ordem)
 
 1. [x] Estrutura base (Main server/client, Remotes, Config)
-2. [ ] PlayerData + DataStore
+2. [x] PlayerData + DataStore
 3. [ ] Currency (dinheiro)
 4. [ ] Bases dos jogadores
 5. [ ] Criaturas (definições + geração de renda)
@@ -86,4 +88,9 @@ Se criar uma nova pasta raiz fora dessas, atualize o `default.project.json`.
   - `Main.client.luau` faz o mesmo com `Controllers/`.
   - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor, vazios por enquanto); `getEvent(name)` / `getFunction(name)` nos dois lados.
   - `src/shared/Config/init.luau` contém só a versão (`0.0.1`).
+- `PlayerDataService` (`src/server/Services/PlayerDataService/`) pronto:
+  - Uma chave por jogador (`Player_<UserId>`) com `{ Data, Lock }`. Session lock via `UpdateAsync`: o lock expira em 180 s sem renovação; um servidor só grava se o lock for dele e, se não for, kicka o jogador.
+  - Load com 5 tentativas (5 s entre elas); se falhar, kicka e não salva. Autosave a cada 60 s, save + liberação do lock ao sair e no `BindToClose`.
+  - Template atual: `DataVersion = 1`, `JoinCount` (incrementado a cada load).
+  - API (outros serviços usam `require(script.Parent.PlayerDataService)`): `IsLoaded(player)`, `Get(player, key)` (tabelas vêm como cópia), `Set(player, key, value)`, `Update(player, key, fn)` (o `fn` não pode yieldar), `OnPlayerLoaded(callback)`. `Set`/`Update` retornam `false` se o jogador não estiver carregado e dão erro se a chave não existir no template, se for `DataVersion` ou se o tipo for diferente.
 - Nenhum sistema de gameplay implementado ainda.
