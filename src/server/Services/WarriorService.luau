@@ -1,8 +1,8 @@
 --!strict
 
--- Pergaminhos, chocagem e guerreiros. Cada jogador tem um número de slots
--- (SLOTS_PER_BASE + bônus de upgrades/Game Pass), colocados em qualquer ponto do
--- próprio ringue. Um pergaminho entregue ocupa um slot e choca por um tempo que
+-- Totens (no código, "scroll"), chocagem e guerreiros. Cada jogador tem um número
+-- de slots (SLOTS_PER_BASE + bônus de upgrades/Game Pass), colocados em qualquer
+-- ponto do próprio ringue. Um totem entregue ocupa um slot e choca por um tempo que
 -- depende da raridade; o início é salvo como horário (os.time()), então a
 -- chocagem continua com o jogador offline. Ao terminar, vira um guerreiro
 -- sorteado daquela raridade, que gera dinheiro por segundo enquanto o dono está
@@ -24,6 +24,7 @@ local StealConfig = require(Config:WaitForChild("Steal"))
 local BaseService = require(script.Parent.BaseService)
 local CurrencyService = require(script.Parent.CurrencyService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
+local TotemService = require(script.Parent.TotemService)
 
 local WarriorService = {}
 
@@ -38,6 +39,9 @@ local MAX_BELOW_FLOOR = 4
 local MAX_ABOVE_FLOOR = 12
 -- Os letreiros dos slots só aparecem de perto.
 local LABEL_MAX_DISTANCE = 60
+-- Altura do letreiro acima da placa (sem totem) e acima do topo do totem.
+local LABEL_OFFSET = 2.5
+local LABEL_ABOVE_TOTEM = 1.5
 -- Checagem de "está no próprio ringue" (atributo InOwnBase, só pra UI).
 local BASE_CHECK_INTERVAL = 0.25
 
@@ -70,8 +74,13 @@ export type SlotInfo = {
 
 export type StealHandler = (thief: Player, owner: Player, key: string) -> ()
 
+-- Enquanto choca, o totem fica em pé no slot e a placa fica invisível (ela continua
+-- segurando o letreiro e o prompt "Roubar"). Guerreiro nascido: placa colorida.
 type SlotVisual = {
 	part: Part,
+	totem: Model?,
+	totemRarity: string?,
+	totemCFrame: CFrame?,
 	billboard: BillboardGui,
 	prompt: ProximityPrompt,
 	nameLabel: TextLabel,
@@ -320,7 +329,7 @@ local function createSlotVisual(owner: Player, key: string, parent: Instance): S
 	-- Pequeno e só de perto: nada de letreiro gigante em cima da base.
 	local billboard = Instance.new("BillboardGui")
 	billboard.Size = UDim2.fromOffset(170, 66)
-	billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+	billboard.StudsOffset = Vector3.new(0, LABEL_OFFSET, 0)
 	billboard.MaxDistance = LABEL_MAX_DISTANCE
 	billboard.LightInfluence = 0
 	billboard.Parent = part
@@ -382,6 +391,37 @@ local function clearVisuals(player: Player)
 	end
 end
 
+local function removeTotem(visual: SlotVisual)
+	if visual.totem then
+		visual.totem:Destroy()
+	end
+	visual.totem = nil
+	visual.totemRarity = nil
+	visual.totemCFrame = nil
+end
+
+-- Totem em pé no slot enquanto choca (se a raridade tiver modelo; senão fica a placa).
+local function renderTotem(visual: SlotVisual, slot: SlotData, floorCFrame: CFrame, parent: Instance)
+	if visual.totem and visual.totemRarity ~= slot.Rarity then
+		removeTotem(visual)
+	end
+	if visual.totem == nil then
+		if not Rarities[slot.Rarity] or not TotemService:HasTemplate(slot.Rarity) then
+			return
+		end
+		local totem = TotemService:Create(slot.Rarity, nil, false)
+		totem.Parent = parent
+		visual.totem = totem
+		visual.totemRarity = slot.Rarity
+	end
+
+	local totem = visual.totem :: Model
+	if visual.totemCFrame ~= floorCFrame then
+		totem:PivotTo(floorCFrame)
+		visual.totemCFrame = floorCFrame
+	end
+end
+
 local function renderSlots(player: Player, slots: SlotsData, now: number)
 	local areaCFrame, areaSize = getArea(player)
 	if not areaCFrame or not areaSize then
@@ -397,15 +437,26 @@ local function renderSlots(player: Player, slots: SlotsData, now: number)
 			visuals.slots[key] = visual
 		end
 
-		-- Travado (sendo roubado): some do ringue até voltar ou ser entregue.
-		local locked = isLocked(player, key)
-		visual.part.Transparency = if locked then 1 else 0
-		visual.billboard.Enabled = not locked
-		visual.prompt.Enabled = not locked
-
 		local x, z = clampOffset(areaSize, slot.OffsetX, slot.OffsetZ)
 		-- Placa apoiada no piso, um fio acima pra não dar z-fighting.
 		visual.part.CFrame = areaCFrame * CFrame.new(x, visual.part.Size.Y / 2 + 0.02, z)
+
+		-- Travado (sendo roubado): some do ringue até voltar ou ser entregue.
+		local locked = isLocked(player, key)
+		if locked or slot.WarriorId ~= nil then
+			removeTotem(visual)
+		else
+			renderTotem(visual, slot, areaCFrame * CFrame.new(x, 0, z), visuals.folder)
+		end
+		local totem = visual.totem
+		visual.part.Transparency = if locked or totem then 1 else 0
+		visual.billboard.Enabled = not locked
+		visual.billboard.StudsOffset = Vector3.new(
+			0,
+			if totem then TotemService:GetHeight(totem) + LABEL_ABOVE_TOTEM else LABEL_OFFSET,
+			0
+		)
+		visual.prompt.Enabled = not locked
 
 		local rarity = Rarities[slot.Rarity]
 		local color = if rarity then rarity.Color else Color3.fromRGB(255, 255, 255)
@@ -421,17 +472,32 @@ local function renderSlots(player: Player, slots: SlotsData, now: number)
 			visual.prompt.ObjectText = if warrior then warrior.Name else "Guerreiro"
 		else
 			local ready = readyAt(slot)
-			visual.nameLabel.Text = "Pergaminho"
+			visual.nameLabel.Text = "Totem"
 			visual.statusLabel.Text = if ready then `Chocando {formatDuration(ready - now)}` else "Chocando"
-			visual.prompt.ObjectText = "Pergaminho"
+			visual.prompt.ObjectText = "Totem"
 		end
 	end
 
 	for key, visual in visuals.slots do
 		if not slots[key] then
+			removeTotem(visual)
 			visual.part:Destroy()
 			visuals.slots[key] = nil
 		end
+	end
+end
+
+-- Redesenha já, sem esperar o próximo tick (ex.: totem aparece na hora do clique).
+-- Chamado depois de gravar: um erro aqui não pode chegar em quem chamou (o item
+-- já está salvo; se o erro subisse, o jogador continuaria carregando e duplicaria).
+local function renderNow(player: Player)
+	local slots = getSlots(player)
+	if slots == nil then
+		return
+	end
+	local ok, err = pcall(renderSlots, player, slots, os.time())
+	if not ok then
+		warn(`[WarriorService] Erro ao desenhar os slots de {player.Name}: {err}`)
 	end
 end
 
@@ -568,7 +634,7 @@ function WarriorService:Start()
 	end)
 end
 
--- Coloca um pergaminho num slot livre do ringue do jogador. position = nil usa a
+-- Coloca um totem num slot livre do ringue do jogador. position = nil usa a
 -- posição atual do jogador. Retorna (true) ou (false, motivo), com motivo sendo
 -- "NotLoaded", "NoBase", "NoPosition", "OutsideBase", "TooClose" ou "NoFreeSlot".
 function WarriorService:AddScroll(player: Player, rarity: string, position: Vector3?): (boolean, string?)
@@ -579,6 +645,9 @@ function WarriorService:AddScroll(player: Player, rarity: string, position: Vect
 		local now = os.time()
 		return { Rarity = rarity, StartedAt = now, OffsetX = offsetX, OffsetZ = offsetZ, PlacedAt = now }
 	end)
+	if ok then
+		renderNow(player)
+	end
 	return ok, reason
 end
 
@@ -657,10 +726,10 @@ function WarriorService:UnlockSlot(owner: Player, key: string)
 	end
 end
 
--- Entrega um slot travado do dono para o ladrão, na posição atual do ladrão.
--- Primeiro cria no ladrão (com as validações de sempre) e só então remove do dono.
--- Retorna (true) ou (false, motivo); "Gone" = o slot não existe mais.
-function WarriorService:TransferSlot(owner: Player, key: string, thief: Player): (boolean, string?)
+-- Entrega um slot travado do dono para o ladrão, em position (nil = posição atual
+-- do ladrão). Primeiro cria no ladrão (com as validações de sempre) e só então
+-- remove do dono. Retorna (true) ou (false, motivo); "Gone" = o slot não existe mais.
+function WarriorService:TransferSlot(owner: Player, key: string, thief: Player, position: Vector3?): (boolean, string?)
 	local ownerSlots = getSlots(owner)
 	local record = if ownerSlots then ownerSlots[key] else nil
 	if record == nil then
@@ -668,7 +737,7 @@ function WarriorService:TransferSlot(owner: Player, key: string, thief: Player):
 		return false, "Gone"
 	end
 
-	local ok, reason, thiefKey = placeRecord(thief, nil, function(offsetX: number, offsetZ: number): SlotData
+	local ok, reason, thiefKey = placeRecord(thief, position, function(offsetX: number, offsetZ: number): SlotData
 		return {
 			Rarity = record.Rarity,
 			StartedAt = record.StartedAt,
@@ -698,6 +767,7 @@ function WarriorService:TransferSlot(owner: Player, key: string, thief: Player):
 	end
 
 	WarriorService:UnlockSlot(owner, key)
+	renderNow(thief)
 	return true, nil
 end
 

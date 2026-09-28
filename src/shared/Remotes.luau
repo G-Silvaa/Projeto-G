@@ -9,14 +9,15 @@ local Remotes = {}
 
 -- Chave = valor, para usar como Remotes.Events.NomeDoRemote.
 Remotes.Events = {
-	-- Servidor -> todos: aviso no chat (evento de pergaminho lendário).
+	-- Servidor -> todos: aviso no chat (evento de totem lendário).
 	Announcement = "Announcement",
 	-- Servidor -> um jogador: mensagem curta na tela (ex.: "O guardião te pegou!").
 	Notify = "Notify",
 } :: { [string]: string }
 
 Remotes.Functions = {
-	-- Cliente -> servidor, sem argumentos: colocar o pergaminho carregado na posição atual.
+	-- Cliente -> servidor (position: Vector3): colocar o totem carregado no ponto do chão
+	-- da própria base em que o jogador clicou.
 	PlaceScroll = "PlaceScroll",
 	-- Cliente -> servidor (upgradeId: string): comprar o próximo nível de um upgrade.
 	BuyUpgrade = "BuyUpgrade",

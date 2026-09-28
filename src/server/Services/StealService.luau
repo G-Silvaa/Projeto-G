@@ -2,7 +2,7 @@
 
 -- Roubo entre jogadores. O ladrão ativa o prompt "Roubar" de um slot alheio; o
 -- servidor valida tudo, trava o slot do dono (some e para de render) e o ladrão
--- passa a carregar um pergaminho da mesma raridade.
+-- passa a carregar um totem da mesma raridade.
 --   - Entregou no próprio ringue: WarriorService:TransferSlot (o item é dele).
 --   - Morreu, foi pego (pelo dono ou por um guardião) ou saiu: o slot destrava.
 --   - O dono saiu no meio: o roubo é cancelado e o item fica salvo com o dono.
@@ -87,11 +87,11 @@ local function onStealAttempt(thief: Player, owner: Player, key: string)
 		return
 	end
 
-	local itemName = if info.WarriorId then "guerreiro" else "pergaminho"
+	local itemName = if info.WarriorId then "guerreiro" else "totem"
 	local steal: Steal = { thief = thief, owner = owner, key = key, itemName = itemName }
 
-	local carrying = ScrollService:CarryItem(thief, info.Rarity, function(placer: Player): (boolean, string?)
-		local ok, reason = WarriorService:TransferSlot(owner, key, placer)
+	local carrying = ScrollService:CarryItem(thief, info.Rarity, function(placer: Player, position: Vector3): (boolean, string?)
+		local ok, reason = WarriorService:TransferSlot(owner, key, placer, position)
 		if ok then
 			stealsByThief[thief] = nil
 			notify(owner, `{thief.Name} roubou seu {itemName}!`)
@@ -113,7 +113,7 @@ local function onStealAttempt(thief: Player, owner: Player, key: string)
 	stealsByThief[thief] = steal
 	lastSteal[thief] = now
 	notify(owner, `{thief.Name} está roubando seu {itemName}! Pegue ele antes que chegue na base.`)
-	notify(thief, `Você pegou um {itemName}! Leve até o seu ringue.`)
+	notify(thief, `Você pegou um {itemName}! Leve até o seu ringue e clique no chão para colocar.`)
 end
 
 -- Dono encostou no ladrão: o item volta.

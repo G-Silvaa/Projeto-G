@@ -41,3 +41,15 @@ Pontos em que foi preciso escolher sem perguntar (itens 7 a 12). Sempre foi esco
 
 - Nada foi testado no Studio. A validação foi `luau-compile` + `luau-lsp analyze` em modo strict, com as definições do Roblox.
 - **`MaxPlayers = 5`** precisa ser configurado à mão no Studio (*Game Settings → Places*).
+
+## Totens e guardiões do mapa
+
+- **Raridade pela cor, não por `Highlight`.** As peças do `TotemTemplate` com o atributo `RarityTint = true` são pintadas, e todo totem ganha uma `PointLight` na cor da raridade. O Roblox só desenha ~31 `Highlight` ao mesmo tempo, e o jogo pode ter 60 totens nas fases e até 70 nas bases.
+- **Carregado nas costas** por padrão (`Config/Totems.CarryMount = "Back"`; `"Head"` põe acima da cabeça), com `CarryHeight` de altura.
+- **Totens no chão não giram mais.** Um totem em pé girando fica estranho.
+- **Scripts dos modelos são removidos:** dos clones de totem e dos NPCs guardiões, com `warn` listando os nomes. Nos guardiões, a remoção acontece quando o servidor inicia, mas scripts no Workspace já rodaram ao abrir o jogo. Por isso o `warn` pede para apagá-los no Studio.
+- **Animação dos guardiões:** só parado e corrida (as padrão do R15), tocadas pelo servidor. Não há animação de pulo, queda nem de "andar devagar". Na volta ao posto ele também usa a corrida, com a velocidade das pernas acompanhando a real.
+- **Colocar clicando no chão:** o jogador precisa estar dentro do próprio ringue, e o ponto clicado também. Não há checagem extra de alcance: os dois estando na base já basta. A altura do clique só serve para validar; o slot salva só `OffsetX/Z`.
+- **Aceleração sem mudar o balanceamento:** `Speeds[N]` virou a velocidade máxima (a mesma de antes). A perseguição começa em 60% e chega nela em 3 s. Acelerar acima dos valores antigos deixaria a fase 10 mais rápida que o teto do jogador (350).
+- **"Defender os totens"** foi interpretado como: ficar no posto (que você escolhe no Studio, perto dos totens), vigiar com alerta e perseguir só quem pegar um totem. Ninguém é atacado sem carregar totem.
+- **Giro do guardião** (virar para quem se aproxima) é feito escrevendo o `CFrame` do `HumanoidRootPart` aos poucos. Pode ficar um pouco "travado"; se incomodar, dá para trocar por `AlignOrientation`.

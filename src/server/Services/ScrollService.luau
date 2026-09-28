@@ -1,13 +1,14 @@
 --!strict
 
--- Pergaminhos no chão das fases: spawn por fase (Config/Phases), evento lendário
--- com aviso no chat, coleta encostando (validada no servidor), carregar 1 por vez
--- e colocar na base pelo remote PlaceScroll.
+-- Totens (no código ainda "scroll", o antigo pergaminho) no chão das fases: spawn
+-- por fase (Config/Phases), evento lendário com aviso no chat, coleta encostando
+-- (validada no servidor), carregar 1 por vez e colocar na base clicando no chão
+-- (remote PlaceScroll). O visual vem do TotemService.
 --
--- Contagem por fase: um pergaminho conta no MaxScrolls da fase de origem desde que
+-- Contagem por fase: um totem conta no MaxScrolls da fase de origem desde que
 -- aparece até ser colocado numa base, inclusive enquanto alguém carrega. Se o
 -- carregador morrer ou sair, ele volta para o chão da mesma fase sem mudar a
--- contagem. Pergaminhos do evento lendário nunca contam.
+-- contagem. Totens do evento lendário nunca contam.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,21 +18,21 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = Shared:WaitForChild("Config")
 local PhasesConfig = require(Config:WaitForChild("Phases"))
 local Rarities = require(Config:WaitForChild("Rarities"))
+local TotemsConfig = require(Config:WaitForChild("Totems"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
 
 local BaseService = require(script.Parent.BaseService)
+local TotemService = require(script.Parent.TotemService)
 local WarriorService = require(script.Parent.WarriorService)
 
 local ScrollService = {}
 
--- Distância máxima real (studs) entre o personagem e o pergaminho pra valer a coleta.
+-- Distância máxima real (studs) entre o personagem e a borda do totem pra valer a coleta.
 local PICKUP_DISTANCE = 8
 -- Intervalo mínimo entre duas chamadas de PlaceScroll do mesmo jogador.
 local PLACE_COOLDOWN = 0.5
 -- Tentativas de achar chão num ponto aleatório da fase antes de desistir do spawn.
 local SPAWN_ATTEMPTS = 5
-local SCROLL_HOVER = 1.5
-local LABEL_MAX_DISTANCE = 80
 
 -- Mensagens do botão (motivos do WarriorService:AddScroll e daqui).
 local MESSAGES: { [string]: string } = {
@@ -39,8 +40,10 @@ local MESSAGES: { [string]: string } = {
 	NoBase = "Você não tem base",
 	NoPosition = "Personagem não encontrado",
 	OutsideBase = "Fora da sua base",
-	TooClose = "Muito perto de outro guerreiro",
-	NotCarrying = "Você não está carregando pergaminho",
+	NotInBase = "Entre na sua base para colocar",
+	BadPosition = "Não foi possível colocar",
+	TooClose = "Muito perto de outro totem ou guerreiro",
+	NotCarrying = "Você não está carregando nenhum totem",
 	RateLimited = "Calma, tente de novo",
 	Gone = "Esse item não existe mais",
 }
@@ -49,19 +52,22 @@ type GroundScroll = {
 	rarity: string,
 	phase: number,
 	fromEvent: boolean,
+	model: Model,
 }
 
--- onPlace: o que acontece ao apertar "Colocar" (true = entregue; "Gone" = o item
--- deixou de existir e a carga acaba). onLost: morreu, foi pego ou saiu.
-export type PlaceHandler = (player: Player) -> (boolean, string?)
+-- onPlace: o que acontece ao clicar no chão da base, com o ponto clicado (true =
+-- entregue; "Gone" = o item deixou de existir e a carga acaba). onLost: morreu,
+-- foi pego ou saiu.
+export type PlaceHandler = (player: Player, position: Vector3) -> (boolean, string?)
 
 type Carried = {
 	rarity: string,
-	visual: BasePart,
+	visual: Model,
 	onPlace: PlaceHandler,
 	onLost: () -> (),
 }
 
+-- Chave: a Hitbox do totem no chão.
 local groundScrolls: { [BasePart]: GroundScroll } = {}
 local countByPhase: { [number]: number } = {}
 local carrying: { [Player]: Carried } = {}
@@ -94,46 +100,16 @@ local function pickWeighted(weights: { [string]: number }): string?
 	return last
 end
 
-local function createScrollPart(rarity: string): Part
-	local rarityInfo = Rarities[rarity]
-
-	local part = Instance.new("Part")
-	part.Name = "Scroll"
-	part.Shape = Enum.PartType.Cylinder
-	part.Size = Vector3.new(2.4, 0.8, 0.8)
-	part.Material = Enum.Material.Neon
-	part.Color = rarityInfo.Color
-	part.Anchored = true
-	part.CanCollide = false
-	part.CanQuery = false
-	part.CastShadow = false
-
-	local billboard = Instance.new("BillboardGui")
-	billboard.Size = UDim2.fromOffset(120, 28)
-	billboard.StudsOffset = Vector3.new(0, 1.6, 0)
-	billboard.MaxDistance = LABEL_MAX_DISTANCE
-	billboard.LightInfluence = 0
-	billboard.Parent = part
-
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.GothamBold
-	label.TextScaled = true
-	label.Text = rarityInfo.DisplayName
-	label.TextColor3 = rarityInfo.Color
-	-- Contorno claro pra ler bem em qualquer cor, inclusive o preto do Secreto.
-	label.TextStrokeColor3 = Color3.fromRGB(255, 255, 255)
-	label.TextStrokeTransparency = 0.2
-	label.Parent = billboard
-
-	return part
-end
-
 local function randomFloorPoint(volume: BasePart): Vector3?
 	local exclude: { Instance } = { volume }
 	if scrollsFolder then
 		table.insert(exclude, scrollsFolder)
+	end
+	-- Senão um totem pode nascer na cabeça de um guardião.
+	local map = Workspace:FindFirstChild("Map")
+	local guardians = if map then map:FindFirstChild("Guardians") else nil
+	if guardians then
+		table.insert(exclude, guardians)
 	end
 	for _, player in Players:GetPlayers() do
 		if player.Character then
@@ -160,7 +136,7 @@ end
 
 local onScrollTouched: (BasePart, BasePart) -> ()
 
--- Só cria o pergaminho no chão; quem chama cuida de countByPhase.
+-- Só cria o totem no chão; quem chama cuida de countByPhase.
 local function spawnScroll(phase: number, rarity: string, fromEvent: boolean): boolean
 	local volume = BaseService:GetPhasePart(phase)
 	if volume == nil then
@@ -171,12 +147,13 @@ local function spawnScroll(phase: number, rarity: string, fromEvent: boolean): b
 		return false
 	end
 
-	local part = createScrollPart(rarity)
-	part.CFrame = CFrame.new(point + Vector3.new(0, SCROLL_HOVER, 0))
-	part.Parent = scrollsFolder
-	groundScrolls[part] = { rarity = rarity, phase = phase, fromEvent = fromEvent }
-	part.Touched:Connect(function(hit: BasePart)
-		onScrollTouched(part, hit)
+	local model = TotemService:Create(rarity, nil, true)
+	local hitbox = TotemService:AddHitbox(model)
+	model:PivotTo(CFrame.new(point) * CFrame.Angles(0, random:NextNumber(0, 2 * math.pi), 0))
+	model.Parent = scrollsFolder
+	groundScrolls[hitbox] = { rarity = rarity, phase = phase, fromEvent = fromEvent, model = model }
+	hitbox.Touched:Connect(function(hit: BasePart)
+		onScrollTouched(hitbox, hit)
 	end)
 	return true
 end
@@ -200,46 +177,33 @@ local function loseCarried(player: Player)
 	end
 end
 
--- Personagem vivo e o ponto onde o item fica preso (cabeça, ou o HumanoidRootPart).
-local function carryAnchor(player: Player): (Model?, BasePart?)
+-- Personagem vivo, ou nil.
+local function aliveCharacter(player: Player): Model?
 	local character = player.Character
 	if character == nil then
-		return nil, nil
+		return nil
 	end
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if humanoid == nil or humanoid.Health <= 0 then
-		return nil, nil
+		return nil
 	end
-	local head = character:FindFirstChild("Head")
-	if head and head:IsA("BasePart") then
-		return character, head
-	end
-	local root = character:FindFirstChild("HumanoidRootPart")
-	if root and root:IsA("BasePart") then
-		return character, root
-	end
-	return nil, nil
+	return character
 end
 
+-- false se o personagem não tem onde prender o totem.
 local function startCarrying(
 	player: Player,
 	character: Model,
-	anchor: BasePart,
 	rarity: string,
 	onPlace: PlaceHandler,
 	onLost: () -> ()
-)
-	local visual = createScrollPart(rarity)
-	visual.Name = "CarriedScroll"
-	visual.Anchored = false
-	visual.CanTouch = false
-	visual.Massless = true
-	visual.CFrame = anchor.CFrame * CFrame.new(0, 2.5, 0)
-
-	local weld = Instance.new("WeldConstraint")
-	weld.Part0 = anchor
-	weld.Part1 = visual
-	weld.Parent = visual
+): boolean
+	local visual = TotemService:Create(rarity, TotemsConfig.CarryHeight, true)
+	visual.Name = "CarriedTotem"
+	if not TotemService:MountOn(visual, character) then
+		visual:Destroy()
+		return false
+	end
 	visual.Parent = character
 
 	carrying[player] = {
@@ -256,6 +220,7 @@ local function startCarrying(
 			loseCarried(player)
 		end)
 	end
+	return true
 end
 
 onScrollTouched = function(part: BasePart, hit: BasePart)
@@ -273,22 +238,20 @@ onScrollTouched = function(part: BasePart, hit: BasePart)
 		return
 	end
 
-	local carrier, anchor = carryAnchor(player)
 	local root = character:FindFirstChild("HumanoidRootPart")
-	if carrier == nil or anchor == nil or root == nil or not root:IsA("BasePart") then
+	if aliveCharacter(player) ~= character or root == nil or not root:IsA("BasePart") then
 		return
 	end
-	-- Um exploit consegue disparar Touched de longe: vale a distância real.
-	if (root.Position - part.Position).Magnitude > PICKUP_DISTANCE then
+	-- Um exploit consegue disparar Touched de longe: vale a distância real (até a
+	-- borda do totem, porque um totem grande tem o centro longe de quem encosta).
+	local reach = PICKUP_DISTANCE + math.max(part.Size.X, part.Size.Z) / 2
+	if (root.Position - part.Position).Magnitude > reach then
 		return
 	end
-
-	groundScrolls[part] = nil
-	part:Destroy()
 
 	local rarity, phase, fromEvent = scroll.rarity, scroll.phase, scroll.fromEvent
-	startCarrying(player, carrier, anchor, rarity, function(placer: Player): (boolean, string?)
-		local ok, reason = WarriorService:AddScroll(placer, rarity)
+	local carried = startCarrying(player, character, rarity, function(placer: Player, position: Vector3): (boolean, string?)
+		local ok, reason = WarriorService:AddScroll(placer, rarity, position)
 		if ok and not fromEvent then
 			countByPhase[phase] -= 1
 		end
@@ -299,9 +262,24 @@ onScrollTouched = function(part: BasePart, hit: BasePart)
 			countByPhase[phase] -= 1
 		end
 	end)
+	if carried then
+		groundScrolls[part] = nil
+		scroll.model:Destroy()
+	end
 end
 
-local function onPlaceScroll(player: Player): (boolean, string)
+local function isFiniteVector(vector: Vector3): boolean
+	for _, value in { vector.X, vector.Y, vector.Z } do
+		if value ~= value or value == math.huge or value == -math.huge then
+			return false
+		end
+	end
+	return true
+end
+
+-- position: ponto do chão onde o jogador clicou. Não confiamos nele: o jogador
+-- precisa estar no próprio ringue e o AddScroll confere se o ponto está na área.
+local function onPlaceScroll(player: Player, position: unknown): (boolean, string)
 	local now = os.clock()
 	local last = lastPlaceCall[player]
 	if last and now - last < PLACE_COOLDOWN then
@@ -309,12 +287,18 @@ local function onPlaceScroll(player: Player): (boolean, string)
 	end
 	lastPlaceCall[player] = now
 
+	if typeof(position) ~= "Vector3" or not isFiniteVector(position) then
+		return false, MESSAGES.BadPosition
+	end
 	local carried = carrying[player]
 	if not carried then
 		return false, MESSAGES.NotCarrying
 	end
+	if not WarriorService:IsInPlacementArea(player) then
+		return false, MESSAGES.NotInBase
+	end
 
-	local ok, reason = carried.onPlace(player)
+	local ok, reason = carried.onPlace(player, position)
 	if ok then
 		stopCarrying(player)
 		return true, "Colocado na sua base!"
@@ -365,7 +349,7 @@ local function runLegendaryEvent()
 		local rarity = pickWeighted(event.Weights)
 		if rarity and spawnScroll(phase, rarity, true) then
 			local name = Rarities[rarity].DisplayName
-			Remotes.getEvent(Remotes.Events.Announcement):FireAllClients(`Um pergaminho {name} apareceu na fase {phase}!`)
+			Remotes.getEvent(Remotes.Events.Announcement):FireAllClients(`Um totem {name} apareceu na fase {phase}!`)
 		end
 	end
 end
@@ -393,12 +377,11 @@ function ScrollService:CarryItem(player: Player, rarity: string, onPlace: PlaceH
 	if carrying[player] or not Rarities[rarity] then
 		return false
 	end
-	local character, anchor = carryAnchor(player)
-	if character == nil or anchor == nil then
+	local character = aliveCharacter(player)
+	if character == nil then
 		return false
 	end
-	startCarrying(player, character, anchor, rarity, onPlace, onLost)
-	return true
+	return startCarrying(player, character, rarity, onPlace, onLost)
 end
 
 function ScrollService:Init()
@@ -414,11 +397,11 @@ function ScrollService:Init()
 
 	for phase = 1, #PhasesConfig.Phases do
 		if BaseService:GetPhasePart(phase) == nil then
-			warn(`[ScrollService] Config/Phases tem a fase {phase}, mas não existe Workspace.Map.Phases.Phase{phase}; ela não recebe pergaminhos`)
+			warn(`[ScrollService] Config/Phases tem a fase {phase}, mas não existe Workspace.Map.Phases.Phase{phase}; ela não recebe totens`)
 		end
 	end
 	for phase = #PhasesConfig.Phases + 1, BaseService:GetPhaseCount() do
-		warn(`[ScrollService] Phase{phase} existe no mapa, mas não está em Config/Phases; ela não recebe pergaminhos`)
+		warn(`[ScrollService] Phase{phase} existe no mapa, mas não está em Config/Phases; ela não recebe totens`)
 	end
 
 	local folder = Instance.new("Folder")

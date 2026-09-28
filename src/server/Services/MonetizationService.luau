@@ -165,7 +165,7 @@ local function onPromptPurchase(player: Player, kind: unknown, key: unknown): (b
 			return false, "Em breve"
 		end
 		if key == "SkipHatch" and not WarriorService:HasHatching(player) then
-			return false, "Nenhum pergaminho chocando"
+			return false, "Nenhum totem chocando"
 		end
 		MarketplaceService:PromptProductPurchase(player, product.Id)
 		return true, ""

@@ -18,7 +18,7 @@ Tema anime, com personagens 100% originais — nunca usar nomes, visuais ou elem
 Loop principal:
 
 1. O jogador treina velocidade numa esteira na própria base.
-2. Corre pelo corredor compartilhado, dividido em 10 fases, e pega um pergaminho no chão. Só dá para carregar 1 pergaminho por vez.
+2. Corre pelo corredor compartilhado, dividido em 10 fases, e pega um pergaminho no chão. Só dá para carregar 1 pergaminho por vez. **Para o jogador, o pergaminho se chama "totem"** (todos os textos da tela dizem "totem"); no código e nos dados continua `Scroll`.
 3. Cada fase tem um guardião que persegue quem está carregando pergaminho. Se alcançar, arremessa o jogador para longe, e o pergaminho volta para a fase.
 4. Os guardiões ficam muito mais rápidos a cada fase: só com velocidade treinada dá para escapar nas fases finais.
 5. Pergaminho entregue na base "choca" por um tempo que depende da raridade (Comum é curto, Secreto é muito longo). O tempo corre mesmo com o jogador offline, então o jogo guarda o horário de início, não um contador.
@@ -89,6 +89,7 @@ O mapa é montado à mão no Studio (modelos da Loja) e fica salvo no place, nã
 Workspace.Map
 ├── Bases/      Base1..Base5: o ringue inteiro (Model) ou uma Part no centro dele (colocados à mão)
 ├── Phases/     Phase1..PhaseN: Parts invisíveis cobrindo a área de cada fase
+├── Guardians/  Guardian1..GuardianN: NPCs (R15 com Humanoid) montados à mão; N = fase
 ├── Lobby       Part (piso visível) onde nasce quem não tem base; precisa dar acesso ao corredor
 ├── KillZone    Part invisível abaixo de tudo; quem encosta volta pra própria base (ou pro lobby)
 └── Corridor/   chão dos biomas e paredões (só visual, o código não lê)
@@ -100,6 +101,8 @@ Workspace.Map
   - **Part**: o personagem nasce em cima dela. A área da Part também é a área onde dá pra colocar pergaminhos, então ela precisa cobrir o piso inteiro do ringue (`Transparency = 1`, `CanCollide = false`).
   - Sem placa nem nome em cima das bases. A altura de nascimento é `SPAWN_HEIGHT` no topo do `BaseService`.
 - Não precisa colocar `SpawnLocation` no mapa: o `BaseService` cria os pontos de nascimento sozinho. O do template pode ser apagado.
+- **Guardiões:** `GuardianN` é um `Model` com `Humanoid` e `HumanoidRootPart`, posto dentro do volume `PhaseN`. A posição e a direção em que ele está no Studio viram o posto. As peças podem ficar ancoradas no Studio; o servidor desancora ao iniciar. Fase sem guardião fica sem (com `warn`). Scripts dentro do NPC são removidos ao iniciar, com `warn` listando os nomes. Como scripts no Workspace rodam assim que o jogo abre, apague-os também no Studio. As animações vêm do servidor.
+- **Totens** (fora do Workspace, em `ServerStorage`): `TotemTemplate` (Model) é o visual padrão; as peças com o atributo `RarityTint = true` ficam na cor da raridade (sem nenhuma marcada, pinta a peça principal). `Totem_<Rarity>` (ex.: `Totem_Legendary`) é opcional e é usado como está. Sem modelo, fica o visual antigo (cilindro neon) com `warn`. Scripts dos modelos são removidos dos clones.
 - O número de fases é o maior `PhaseN` encontrado. `Phase1` é a mais perto das bases, e os volumes não devem se sobrepor.
 - Marcador faltando ou do tipo errado gera um `warn` específico no Output quando o servidor inicia. O resto continua funcionando.
 - Esqueleto inicial: `tools/BuildMap.luau`. Ele cria `Corridor` (4 biomas), `Phases/Phase1..4`, `Lobby`, `KillZone` e a pasta `Bases` vazia, e remove o `Baseplate` e o `SpawnLocation` do template.
@@ -137,7 +140,7 @@ Workspace.Map
 - Estrutura base pronta:
   - `Main.server.luau` chama `Remotes.setup()`, carrega os ModuleScripts de `Services/` (outros tipos de filho são ignorados), chama `Init()` em ordem alfabética e depois `Start()` em `task.spawn`. Os dois métodos são opcionais e chamados com `:`. Erro em um serviço gera `warn` e não derruba os outros; se o `Init` falhar, o `Start` daquele serviço não roda.
   - `Main.client.luau` faz o mesmo com `Controllers/`.
-  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor); `getEvent(name)` / `getFunction(name)` nos dois lados. Hoje: `Functions.PlaceScroll`, `Functions.PromptPurchase` (ver `MonetizationService`), `Functions.Rebirth` (ver `RebirthService`), `Functions.BuyUpgrade` (ver `UpgradeService`), `Events.Announcement` (ver `ScrollService`) e `Events.Notify` (mensagem curta do servidor para um jogador, mostrada pelo `HudController`).
+  - `src/shared/Remotes.luau`: nomes em `Remotes.Events` / `Remotes.Functions` (chave = valor); `getEvent(name)` / `getFunction(name)` nos dois lados. Hoje: `Functions.PlaceScroll(position)` (ver `ScrollService`), `Functions.PromptPurchase` (ver `MonetizationService`), `Functions.Rebirth` (ver `RebirthService`), `Functions.BuyUpgrade` (ver `UpgradeService`), `Events.Announcement` (ver `ScrollService`) e `Events.Notify` (mensagem curta do servidor para um jogador, mostrada pelo `HudController`).
   - `src/shared/Config/init.luau` contém só a versão (`0.0.1`).
   - `src/shared/Format.luau`: `Format.number(n)` → "950", "1.5K", "2.3M", "4.1B"... (servidor e cliente).
 - `PlayerDataService` (`src/server/Services/PlayerDataService/`) pronto:
@@ -170,9 +173,9 @@ Workspace.Map
     - `GetSlots(player)`: lista de `{ Index, Rarity, StartedAt, ReadyAt, WarriorId?, Offset }` em ordem de índice, ou `nil` se os dados não estiverem carregados.
     - `GetMaxSlots(player)` (`SLOTS_PER_BASE` + bônus registrados por `AddSlotBonus`) e `IsInPlacementArea(player, position?)` (mesma regra de área do `AddScroll`, sem olhar distância nem espaço livre).
     - Extensões: `AddSlotBonus(fn)`, `AddIncomeMultiplier(fn)` (renda = soma × multiplicadores, arredondada pra baixo). Outros serviços registram aqui, para o `WarriorService` não depender deles.
-    - Roubo: `OnStealAttempt(fn)` (prompt "Roubar" de cada slot), `GetSlotInfo(owner, key)`, `GetSlotWorldPosition(owner, key)`, `LockSlot`/`UnlockSlot` (travado = invisível, sem renda, só em memória), `TransferSlot(owner, key, thief)` (cria no ladrão, na posição dele, e só então remove do dono; se o dono sumiu, desfaz).
+    - Roubo: `OnStealAttempt(fn)` (prompt "Roubar" de cada slot), `GetSlotInfo(owner, key)`, `GetSlotWorldPosition(owner, key)`, `LockSlot`/`UnlockSlot` (travado = invisível, sem renda, só em memória), `TransferSlot(owner, key, thief, position?)` (cria no ladrão, no ponto dado ou na posição dele, e só então remove do dono; se o dono sumiu, desfaz).
   - Mantém o atributo `InOwnBase` de todos os jogadores (a cada 0,25 s, via `IsInPlacementArea`), só para a UI.
-  - Visual (só servidor, sem remotes): uma placa colorida pela raridade em cada slot, em `Workspace.WarriorSlots.<UserId>`, com um letreiro pequeno (visível até `LABEL_MAX_DISTANCE`). Chocando, mostra "Pergaminho", a raridade e o tempo restante; depois, o nome do guerreiro, a raridade e o `$/s`.
+  - Visual (só servidor, sem remotes), em `Workspace.WarriorSlots.<UserId>`: cada slot tem uma placa (que segura o letreiro e o prompt "Roubar") e um letreiro pequeno (visível até `LABEL_MAX_DISTANCE`). Chocando, o totem da raridade (`TotemService`) fica em pé no ponto do slot, a placa fica invisível e o letreiro mostra "Totem", a raridade e o tempo restante. Guerreiro nascido: o totem some, a placa colorida volta e o letreiro mostra o nome, a raridade e o `$/s`. `AddScroll` e `TransferSlot` redesenham na hora.
   - Ainda não existe: mutações, renda offline.
 - `ScrollService` (`src/server/Services/ScrollService.luau`) pronto. Config em `src/shared/Config/Phases.luau`: `Phases[N]` com pesos de raridade, `MaxScrolls` e `SpawnInterval` de cada fase; `LegendaryEvent`.
   - **Spawn:** cada fase começa cheia e depois repõe 1 pergaminho por `SpawnInterval`, até `MaxScrolls`. O ponto é aleatório dentro do volume `PhaseN`, e um raio de cima pra baixo acha o chão.
@@ -181,14 +184,21 @@ Workspace.Map
   - **Contagem:** um pergaminho conta no `MaxScrolls` da fase de origem desde que aparece até ser colocado numa base, inclusive enquanto alguém carrega.
   - **Coleta:** pega encostando (`Touched`), mas o servidor confere a distância real até o personagem (`PICKUP_DISTANCE`), porque um exploit consegue disparar `Touched` de longe. Só dá pra carregar 1 por vez. Ele aparece acima da cabeça, preso ao personagem e sem colisão.
   - **Perda:** morrer (a KillZone mata), trocar de personagem ou sair do jogo faz o pergaminho voltar para o chão da mesma fase, com a mesma raridade.
-  - **Colocar:** enquanto o jogador carrega, o servidor marca no `Player` os atributos `CarryingScroll` (raridade) e `InOwnBase` (a cada 0,25 s, via `IsInPlacementArea`). Eles só servem para o cliente mostrar o botão; o servidor não confia neles.
-  - **Remote `Functions.PlaceScroll`:** não recebe argumento nenhum. O servidor usa o pergaminho carregado e a posição atual no `AddScroll`, com rate limit de 1 chamada a cada `PLACE_COOLDOWN` (0,5 s) por jogador. Devolve `(ok, mensagem)` já em português.
-  - **Visual:** pergaminho `Neon` na cor da raridade, com letreiro pequeno, em `Workspace.PhaseScrolls`. O giro é feito só no cliente.
-- `GuardianService` (`src/server/Services/GuardianService.luau`) pronto. Config em `src/shared/Config/Guardians.luau` (velocidade por fase, 14 → 250; intervalo; captura; arremesso).
-  - Um NPC R15 por `PhaseN`, criado pelo servidor (`Players:CreateHumanoidModelFromDescription`, sem asset externo) em `Workspace.Guardians`, parado no centro do chão da fase. Vida infinita; a física é do servidor.
-  - A cada `UpdateInterval` (0,15 s): persegue, em linha reta (`MoveTo`), o jogador mais próximo que carrega pergaminho **dentro da fase dele**; sem alvo, volta ao posto.
-  - Captura (só no servidor): raio `max(CatchDistance, velocidade × intervalo × 0,5)`. O pergaminho volta para a fase de origem (`ScrollService:DropCarried`), o jogador é arremessado por um `LinearVelocity` curto (sem dano) e recebe `Notify`. Depois o guardião ignora alvos por `CatchCooldown`.
-  - `ScrollService` ganhou `IsCarrying`, `GetCarriers` e `DropCarried`.
+  - **Colocar:** clicando/tocando no chão da própria base. Enquanto o jogador carrega, o servidor marca no `Player` os atributos `CarryingScroll` (raridade) e `InOwnBase` (a cada 0,25 s, via `IsInPlacementArea`). Eles só servem para o cliente mostrar a dica; o servidor não confia neles.
+  - **Remote `Functions.PlaceScroll(position: Vector3)`:** o ponto clicado. O servidor valida o tipo e se os números são finitos, aplica rate limit de 1 chamada a cada `PLACE_COOLDOWN` (0,5 s), exige que o **jogador** esteja no próprio ringue e passa o ponto ao `AddScroll`, que confere a área (inclusive a altura perto do piso), a distância de outros slots e o espaço livre. Só `OffsetX/Z` é salvo. Devolve `(ok, mensagem)` já em português. O `onPlace` do `CarryItem` recebe `(player, position)`.
+  - **Visual:** totem (`TotemService`) em pé no chão, com giro aleatório e letreiro da raridade, em `Workspace.PhaseScrolls`. A coleta usa uma `Hitbox` invisível do tamanho do totem; a distância aceita é `PICKUP_DISTANCE` + metade da largura dele. O raio que acha o chão ignora `Map.Guardians`.
+  - **Carregando:** um clone com `CarryHeight` de altura, nas costas ou acima da cabeça (`Config/Totems.CarryMount`), preso por `WeldConstraint`, sem massa e sem colisão.
+- `GuardianService` (`src/server/Services/GuardianService.luau`) pronto. Config em `src/shared/Config/Guardians.luau`.
+  - Usa os NPCs de `Workspace.Map.Guardians.GuardianN` (ver a seção "Mapa"); não cria NPC. O posto é o `CFrame` inicial do `HumanoidRootPart`. Vida infinita; física no servidor.
+  - A cada `UpdateInterval` (0,15 s):
+    - **Perseguição:** o jogador mais próximo que carrega totem **dentro da fase dele**, em linha reta (`MoveTo`). Começa em `ChaseStartFactor` × `Speeds[N]` (0,6) e acelera até `Speeds[N]` (14 → 250) em `ChaseRampSeconds` (3 s). "!!" vermelho acima da cabeça.
+    - **Captura** (raio `max(CatchDistance, velocidade atual × intervalo × 0,5)`): o totem volta para a fase de origem (`ScrollService:DropCarried`), o jogador é arremessado por um `LinearVelocity` curto (sem dano) e recebe `Notify`. Depois o guardião ignora alvos por `CatchCooldown`.
+    - **Sem alvo:** volta ao posto a `max(ReturnMinSpeed, ReturnSpeedFactor × Speeds[N])`. No posto, se há jogador na fase a até `AlertDistance`, vira para ele com um "!" amarelo; senão, olha para a direção original.
+    - **Segurança:** mais de `ResetDistance` do posto, ou `FallDistance` abaixo dele, é teleportado de volta.
+  - **Animações:** o servidor toca, no `Animator` do `Humanoid` (criado se faltar), as animações padrão do R15: parado (`507766666`) e corrida (`507767714`). A troca é pela velocidade real no plano (> 0,5 studs/s = correndo). A corrida acelera junto, até 3× (`RUN_BASE_SPEED`, `RUN_MAX_PLAYBACK`). NPC que não é R15 fica sem animação, com `warn`.
+  - `ScrollService` tem `IsCarrying`, `GetCarriers` e `DropCarried`.
+- `TotemService` (`src/server/Services/TotemService.luau`): só visual. Monta os totens a partir de `ServerStorage` (ver a seção "Mapa"), com pivot no centro da base do modelo. Config em `src/shared/Config/Totems.luau` (`CarryHeight`, `CarryMount`, `LightRange`). Não usa `Highlight` porque o Roblox só desenha ~31 ao mesmo tempo.
+  - API: `Create(rarity, height?, withLabel)` (ancorado, sem colisão, sem toque e invisível para raios; `PointLight` na cor da raridade), `GetHeight(model)`, `HasTemplate(rarity)`, `AddHitbox(model)`, `MountOn(model, character)`.
 - `SpeedService` (`src/server/Services/SpeedService.luau`) pronto. Config em `src/shared/Config/Speed.luau`.
   - `Speed` (pontos, pode ser fracionário) no `PlayerData`. `WalkSpeed = min(MaxWalkSpeed, BaseWalkSpeed + Speed × WalkSpeedPerPoint)` (16 + 0,5 por ponto, teto 350). `Speed` inteiro no leaderstats.
   - **Esteira:** uma por base. Usa o marcador `Treadmill` (Part) dentro do `BaseN` se existir; senão cria uma Part perto da borda +Z da área do ringue. É uma esteira rolante: `AssemblyLinearVelocity` no sentido do `LookVector` da Part, na mesma velocidade que o dono anda. Parado, o jogador sai dela; só fica em cima quem corre contra. Por isso "o dono está em cima" basta para treinar (a cada `TrainingTick`, `GainPerSecond` × multiplicadores), sem confiar no cliente. Treina só o dono da base.
@@ -197,7 +207,7 @@ Workspace.Map
 - `StealService` (`src/server/Services/StealService.luau`) pronto. Config em `src/shared/Config/Steal.luau`.
   - Cada slot tem um `ProximityPrompt` "Roubar" (segurar 1 s). O cliente esconde o prompt nos próprios slots. O servidor valida: não é o dono; o dono está no jogo; o ladrão não carrega nada; rate limit (`AttemptRateLimit`); cooldown entre roubos (`CooldownSeconds`); distância real até o slot (`MaxStealDistance`); proteção após colocar (`ProtectionSeconds`, pelo `PlacedAt`).
   - **O item nunca sai dos dados do dono antes da entrega.** Ao roubar, o slot do dono é travado em memória e o ladrão carrega um pergaminho da mesma raridade (`ScrollService:CarryItem`).
-    - Entregou no próprio ringue (botão "Colocar"): `TransferSlot`. O item é dele, com a mesma raridade, guerreiro e horário de chocagem.
+    - Entregou no próprio ringue (clicando no chão): `TransferSlot`, no ponto clicado. O item é dele, com a mesma raridade, guerreiro e horário de chocagem.
     - Morreu, foi pego por um guardião, o dono encostou nele (`CatchDistance`, checado a cada 0,25 s) ou saiu: o slot destrava e volta pro dono.
     - O dono saiu no meio: o roubo é cancelado e o item fica salvo com o dono.
   - O dono é avisado (`Notify`) no início, na entrega e na devolução.
@@ -222,5 +232,5 @@ Workspace.Map
   - `WarriorService` ganhou `HasHatching(player)` e `SkipHatching(player)`.
 - `StoreController` (`src/client/Controllers/StoreController.luau`): botão "Robux" e painel com passes e produtos ("Em breve" com ID 0, "Comprado" com `Pass_<Key>`).
 - `HudController` (`src/client/Controllers/HudController.luau`): painel com Money (formatado), Velocidade e Rebirths (atributos `Money`, `Speed`, `Rebirths`); botão "Rebirth" com o custo e confirmação em dois cliques; mensagens do `Events.Notify`.
-- `ScrollController` (`src/client/Controllers/ScrollController.luau`): botão "Colocar pergaminho", que só aparece com `CarryingScroll` e `InOwnBase`, mensagem de resultado por 3 s, aviso do evento no chat (`TextChatService`, canal `RBXGeneral`) e giro dos pergaminhos no chão.
+- `ScrollController` (`src/client/Controllers/ScrollController.luau`): com `CarryingScroll` e `InOwnBase`, mostra a dica "Clique (Toque) no chão da sua base para colocar o totem" e um disco translúcido sob o mouse. Clique (`MouseButton1`) ou toque rápido (`TouchTap`), fora de botões da tela, manda o ponto pelo `PlaceScroll`. Mostra a mensagem de resultado por 3 s e o aviso do evento no chat (`TextChatService`, canal `RBXGeneral`). Os totens no chão não giram.
 - Nenhum outro sistema de gameplay implementado ainda.
