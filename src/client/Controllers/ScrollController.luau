@@ -1,7 +1,8 @@
 --!strict
 
 -- Lado do cliente dos totens: carregando e dentro do próprio ringue, o jogador
--- clica (ou toca) no chão da base e o totem é colocado ali. Mostra um aviso, um
+-- clica (ou toca) no chão da base e o totem é colocado ali. Esconde o "Pegar" dos
+-- totens enquanto carrega. Mostra um aviso, um
 -- disco no ponto sob o mouse, a mensagem do resultado e o aviso do evento no chat.
 -- Quem decide tudo é o servidor (ScrollService); o disco é só uma dica.
 
@@ -14,60 +15,40 @@ local Workspace = game:GetService("Workspace")
 
 local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
 
+local UI = script.Parent.Parent:WaitForChild("UI")
+local Hud = require(UI:WaitForChild("Hud"))
+local Style = require(UI:WaitForChild("Style"))
+
 local ScrollController = {}
 
-local MESSAGE_SECONDS = 3
 local RAY_LENGTH = 500
 local PREVIEW_SIZE = 3
 
 local player = Players.LocalPlayer
 
-local function buildGui(): (TextLabel, TextLabel)
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "ScrollGui"
-	gui.ResetOnSpawn = false
-	gui.Parent = player:WaitForChild("PlayerGui")
-
-	local hint = Instance.new("TextLabel")
+-- Dica embaixo, no centro: faixa verde com texto de contorno grosso.
+local function buildHint(): Frame
+	local hint = Instance.new("Frame")
 	hint.Name = "PlaceHint"
-	hint.AnchorPoint = Vector2.new(0.5, 1)
-	hint.Position = UDim2.new(0.5, 0, 1, -40)
-	hint.Size = UDim2.fromOffset(460, 40)
-	hint.BackgroundColor3 = Color3.fromRGB(40, 170, 90)
-	hint.BackgroundTransparency = 0.15
-	hint.Font = Enum.Font.GothamBold
-	hint.TextScaled = true
-	hint.TextColor3 = Color3.fromRGB(255, 255, 255)
-	hint.Text = if UserInputService.TouchEnabled and not UserInputService.MouseEnabled
-		then "Toque no chão da sua base para colocar o totem"
-		else "Clique no chão da sua base para colocar o totem"
+	hint.Size = UDim2.fromScale(1, 1)
+	hint.BackgroundColor3 = Style.Colors.Green
 	hint.Visible = false
-	hint.Parent = gui
+	hint.Parent = Hud.get().bottomCenter
+	Style.corner(hint, 14)
+	Style.stroke(hint, Style.darker(Style.Colors.Green, 0.45), 3)
+	Style.gradient(hint, Color3.fromRGB(255, 255, 255), Color3.fromRGB(190, 190, 190))
 
-	local padding = Instance.new("UIPadding")
-	padding.PaddingLeft = UDim.new(0, 12)
-	padding.PaddingRight = UDim.new(0, 12)
-	padding.PaddingTop = UDim.new(0, 6)
-	padding.PaddingBottom = UDim.new(0, 6)
-	padding.Parent = hint
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 12)
-	corner.Parent = hint
-
-	local message = Instance.new("TextLabel")
-	message.Name = "Message"
-	message.AnchorPoint = Vector2.new(0.5, 1)
-	message.Position = UDim2.new(0.5, 0, 1, -104)
-	message.Size = UDim2.fromOffset(420, 32)
-	message.BackgroundTransparency = 1
-	message.Font = Enum.Font.GothamBold
-	message.TextScaled = true
-	message.TextStrokeTransparency = 0.3
-	message.Visible = false
-	message.Parent = gui
-
-	return hint, message
+	local text = Style.label(
+		if UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+			then "👆 Toque no chão da sua base para colocar o totem"
+			else "👆 Clique no chão da sua base para colocar o totem",
+		Style.TitleFont,
+		2.5
+	)
+	text.Size = UDim2.new(1, -24, 1, -12)
+	text.Position = UDim2.fromOffset(12, 6)
+	text.Parent = hint
+	return hint
 end
 
 -- Disco translúcido deitado no chão, só neste cliente.
@@ -118,37 +99,31 @@ local function showAnnouncement(text: string)
 end
 
 function ScrollController:Start()
-	local hint, message = buildGui()
+	local hint = buildHint()
 	local preview = buildPreview()
 	local placeScroll = Remotes.getFunction(Remotes.Functions.PlaceScroll)
 	local warriorSlots = Workspace:WaitForChild("WarriorSlots")
 	local phaseScrolls = Workspace:WaitForChild("PhaseScrolls")
 	local ignore: { Instance } = { preview, warriorSlots, phaseScrolls }
 	local busy = false
-	local messageToken = 0
 
 	local function canPlace(): boolean
 		return player:GetAttribute("CarryingScroll") ~= nil and player:GetAttribute("InOwnBase") == true
 	end
 
 	local function refreshHint()
-		hint.Visible = canPlace()
+		local visible = canPlace()
+		if visible and not hint.Visible then
+			Style.pop(hint)
+		end
+		hint.Visible = visible
 	end
 	player:GetAttributeChangedSignal("CarryingScroll"):Connect(refreshHint)
 	player:GetAttributeChangedSignal("InOwnBase"):Connect(refreshHint)
 	refreshHint()
 
 	local function showMessage(text: string, success: boolean)
-		messageToken += 1
-		local token = messageToken
-		message.Text = text
-		message.TextColor3 = if success then Color3.fromRGB(120, 255, 140) else Color3.fromRGB(255, 110, 110)
-		message.Visible = true
-		task.delay(MESSAGE_SECONDS, function()
-			if messageToken == token then
-				message.Visible = false
-			end
-		end)
+		Hud.notify(text, if success then Style.Colors.Success else Style.Colors.Error)
 	end
 
 	local function placeAt(screenPosition: Vector2, inset: boolean)
@@ -219,6 +194,22 @@ function ScrollController:Start()
 	warriorSlots.DescendantAdded:Connect(hideIfOwn)
 	for _, descendant in warriorSlots:GetDescendants() do
 		hideIfOwn(descendant)
+	end
+
+	-- Com as mãos ocupadas, o "Pegar" dos totens some (o servidor recusaria de qualquer jeito).
+	local function refreshPickup(instance: Instance)
+		if instance:IsA("ProximityPrompt") and instance.Name == "PickupPrompt" then
+			instance.Enabled = player:GetAttribute("CarryingScroll") == nil
+		end
+	end
+	phaseScrolls.DescendantAdded:Connect(refreshPickup)
+	player:GetAttributeChangedSignal("CarryingScroll"):Connect(function()
+		for _, descendant in phaseScrolls:GetDescendants() do
+			refreshPickup(descendant)
+		end
+	end)
+	for _, descendant in phaseScrolls:GetDescendants() do
+		refreshPickup(descendant)
 	end
 end
 

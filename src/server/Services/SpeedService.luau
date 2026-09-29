@@ -1,7 +1,8 @@
 --!strict
 
--- Velocidade do jogador: treino na esteira da própria base, Speed salvo no
--- PlayerData, WalkSpeed aplicado ao personagem e Speed no leaderstats.
+-- Velocidade do jogador: treino na esteira da própria base, Speed (o nível de
+-- velocidade) salvo no PlayerData, WalkSpeed = Config/Speed.RealSpeed(Speed)
+-- aplicado ao personagem e o nível formatado no leaderstats.
 --
 -- A esteira é uma Part ancorada com AssemblyLinearVelocity (esteira rolante) que
 -- empurra no sentido do LookVector dela, na mesma velocidade que o dono anda.
@@ -12,7 +13,9 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
-local Config = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Format = require(Shared:WaitForChild("Format"))
+local Config = Shared:WaitForChild("Config")
 local SpeedConfig = require(Config:WaitForChild("Speed"))
 local StudioTest = require(Config:WaitForChild("StudioTest"))
 
@@ -23,8 +26,6 @@ local SpeedService = {}
 
 -- Modo de teste do Studio: só mexe no WalkSpeed, nunca no Speed salvo.
 local STUDIO_OVERRIDE = RunService:IsStudio() and StudioTest.Enabled
--- Speed a partir do qual o WalkSpeed já está no teto: não adianta treinar mais.
-local MAX_SPEED_POINTS = (SpeedConfig.MaxWalkSpeed - SpeedConfig.BaseWalkSpeed) / SpeedConfig.WalkSpeedPerPoint
 -- Folga da borda do ringue para a esteira criada pelo servidor.
 local TREADMILL_EDGE_MARGIN = 2
 
@@ -36,12 +37,8 @@ local function getSpeed(player: Player): number
 	return if typeof(speed) == "number" then speed else 0
 end
 
-local function trainedWalkSpeed(speed: number): number
-	return math.min(SpeedConfig.MaxWalkSpeed, SpeedConfig.BaseWalkSpeed + speed * SpeedConfig.WalkSpeedPerPoint)
-end
-
 local function currentWalkSpeed(player: Player): number
-	local walkSpeed = trainedWalkSpeed(getSpeed(player))
+	local walkSpeed = SpeedConfig.RealSpeed(getSpeed(player))
 	if STUDIO_OVERRIDE then
 		walkSpeed = math.max(walkSpeed, StudioTest.WalkSpeed)
 	end
@@ -67,13 +64,14 @@ local function getLeaderstats(player: Player): Folder
 	return folder
 end
 
-local function getSpeedValue(player: Player): IntValue
+-- StringValue formatado ("10K", "7B"...): o nível passa do limite de um IntValue.
+local function getSpeedValue(player: Player): StringValue
 	local leaderstats = getLeaderstats(player)
 	local existing = leaderstats:FindFirstChild("Speed")
-	if existing and existing:IsA("IntValue") then
+	if existing and existing:IsA("StringValue") then
 		return existing
 	end
-	local value = Instance.new("IntValue")
+	local value = Instance.new("StringValue")
 	value.Name = "Speed"
 	value.Parent = leaderstats
 	return value
@@ -83,7 +81,7 @@ local function applySpeed(player: Player)
 	if not PlayerDataService:IsLoaded(player) then
 		return
 	end
-	getSpeedValue(player).Value = math.floor(getSpeed(player))
+	getSpeedValue(player).Value = Format.number(getSpeed(player))
 	-- Só para o HUD; o servidor nunca lê de volta.
 	player:SetAttribute("Speed", math.floor(getSpeed(player)))
 
@@ -156,9 +154,10 @@ local function trainingTick()
 		treadmill.AssemblyLinearVelocity = treadmill.CFrame.LookVector * beltSpeed
 
 		if owner and PlayerDataService:IsLoaded(owner) and isOnTreadmill(owner, treadmill) then
-			local gain = SpeedConfig.GainPerSecond * SpeedConfig.TrainingTick * trainingMultiplier(owner)
+			local multiplier = SpeedConfig.TrainingTick * trainingMultiplier(owner)
 			PlayerDataService:Update(owner, "Speed", function(old: number): number
-				return math.min(old + gain, MAX_SPEED_POINTS)
+				local perSecond = math.max(SpeedConfig.MinGainPerSecond, old * SpeedConfig.GainPercentPerSecond)
+				return math.min(old + perSecond * multiplier, SpeedConfig.MaxLevel)
 			end)
 			applySpeed(owner)
 		end

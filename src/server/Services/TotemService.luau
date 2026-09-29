@@ -81,6 +81,16 @@ local function largestPart(model: Model): BasePart?
 	return best
 end
 
+-- Pinta a peça. Peça de acessório (SpecialMesh com textura) ignora a cor da peça:
+-- nela, a textura é tingida pelo VertexColor.
+local function tint(part: BasePart, color: Color3)
+	part.Color = color
+	local mesh = part:FindFirstChildOfClass("SpecialMesh")
+	if mesh then
+		mesh.VertexColor = Vector3.new(color.R, color.G, color.B)
+	end
+end
+
 local function tintedParts(model: Model): { BasePart }
 	local list: { BasePart } = {}
 	for _, part in parts(model) do
@@ -169,7 +179,7 @@ local function addLabel(model: Model, primary: BasePart, rarity: string, height:
 end
 
 -- Novo totem da raridade, ancorado, sem colisão, sem toque e invisível pra raios.
--- height: altura final em studs (nil = tamanho do template). withLabel: letreiro
+-- height: altura final em studs (nil ou 0 = tamanho do template). withLabel: letreiro
 -- com a raridade acima do totem. Sem parent: quem chama posiciona e parenteia.
 function TotemService:Create(rarity: string, height: number?, withLabel: boolean): Model
 	if not Rarities[rarity] then
@@ -204,7 +214,7 @@ function TotemService:Create(rarity: string, height: number?, withLabel: boolean
 			tinted = { primary }
 		end
 		for _, part in tinted do
-			part.Color = color
+			tint(part, color)
 		end
 	end
 
@@ -241,8 +251,8 @@ function TotemService:HasTemplate(rarity: string): boolean
 	return templates[rarity] ~= nil
 end
 
--- Part invisível do tamanho do totem, a única que dispara Touched (pra pegar no chão).
--- Chame antes de mover o totem: ela vai junto no PivotTo.
+-- Part invisível do tamanho do totem, no centro dele (segura o prompt "Pegar" e
+-- serve de medida da distância). Chame antes de mover o totem: ela vai junto no PivotTo.
 function TotemService:AddHitbox(model: Model): BasePart
 	local boxCFrame, boxSize = model:GetBoundingBox()
 	local hitbox = Instance.new("Part")
@@ -251,7 +261,7 @@ function TotemService:AddHitbox(model: Model): BasePart
 	hitbox.Anchored = true
 	hitbox.CanCollide = false
 	hitbox.CanQuery = false
-	hitbox.CanTouch = true
+	hitbox.CanTouch = false
 	hitbox.CastShadow = false
 	hitbox.Size = boxSize:Max(Vector3.one * MIN_HITBOX)
 	hitbox.CFrame = boxCFrame
@@ -268,11 +278,6 @@ end
 -- sem colisão e sem massa, pra não atrapalhar o movimento. Chame logo depois do
 -- Create, antes de girar o totem. false se o personagem não tem onde prender.
 function TotemService:MountOn(model: Model, character: Model): boolean
-	local primary = model.PrimaryPart
-	if primary == nil then
-		return false
-	end
-
 	local anchor: BasePart? = nil
 	local offset = CFrame.identity
 	if TotemsConfig.CarryMount == "Head" then
@@ -296,6 +301,17 @@ function TotemService:MountOn(model: Model, character: Model): boolean
 		offset = CFrame.new(0, 3, 0)
 	end
 	if anchor == nil then
+		return false
+	end
+	return TotemService:AttachTo(model, anchor, offset)
+end
+
+-- Prende o totem numa peça (ex.: a mão do guardião), com o pivot (centro da base do
+-- totem) em anchor.CFrame * offset. Sem colisão e sem massa. false se o totem não
+-- tem peça principal.
+function TotemService:AttachTo(model: Model, anchor: BasePart, offset: CFrame): boolean
+	local primary = model.PrimaryPart
+	if primary == nil then
 		return false
 	end
 

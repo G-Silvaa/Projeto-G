@@ -1,8 +1,8 @@
 --!strict
 
--- Loja da base: botão "Loja" (só aparece dentro do próprio ringue) e painel com os
--- upgrades. Preços calculados com a mesma fórmula do servidor (Config/Upgrades);
--- quem decide a compra é o UpgradeService.
+-- Loja da base: botão "Loja" na coluna da esquerda (só aparece dentro do próprio
+-- ringue) e janela com os upgrades. Preços calculados com a mesma fórmula do
+-- servidor (Config/Upgrades); quem decide a compra é o UpgradeService.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,128 +12,74 @@ local UpgradesConfig = require(Shared:WaitForChild("Config"):WaitForChild("Upgra
 local Format = require(Shared:WaitForChild("Format"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
 
+local UI = script.Parent.Parent:WaitForChild("UI")
+local Hud = require(UI:WaitForChild("Hud"))
+local Style = require(UI:WaitForChild("Style"))
+
 local ShopController = {}
 
 local MESSAGE_SECONDS = 3
+local BUTTON_ORDER = 1
+local ROW_HEIGHT = 74
+local ICONS: { [string]: string } = {
+	ExtraSlots = "📦",
+	IncomeMultiplier = "💰",
+	TrainingSpeed = "👟",
+}
 
 local player = Players.LocalPlayer
 
-local function makeButton(text: string, color: Color3, parent: Instance): TextButton
-	local button = Instance.new("TextButton")
-	button.BackgroundColor3 = color
-	button.Font = Enum.Font.GothamBold
-	button.TextScaled = true
-	button.TextColor3 = Color3.fromRGB(255, 255, 255)
-	button.Text = text
-	button.Parent = parent
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = button
-	return button
-end
-
-local function makeLabel(text: string, parent: Instance): TextLabel
-	local label = Instance.new("TextLabel")
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.GothamBold
-	label.TextScaled = true
-	label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.Text = text
-	label.Parent = parent
-	return label
-end
-
 function ShopController:Start()
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "ShopGui"
-	gui.ResetOnSpawn = false
-	gui.Parent = player:WaitForChild("PlayerGui")
+	local regions = Hud.get()
 
-	local openButton = makeButton("Loja", Color3.fromRGB(230, 150, 40), gui)
-	openButton.Name = "OpenShop"
-	openButton.AnchorPoint = Vector2.new(1, 1)
-	openButton.Position = UDim2.new(1, -20, 1, -40)
-	openButton.Size = UDim2.fromOffset(130, 50)
-	openButton.Visible = false
+	local open = Style.bigButton("🛒", "Loja", Style.Colors.Green)
+	open.button.Name = "OpenShop"
+	open.button.LayoutOrder = BUTTON_ORDER
+	open.button.Visible = false
+	open.button.Parent = regions.left
 
-	local panel = Instance.new("Frame")
-	panel.Name = "Panel"
-	panel.AnchorPoint = Vector2.new(0.5, 0.5)
-	panel.Position = UDim2.fromScale(0.5, 0.5)
-	panel.Size = UDim2.fromOffset(440, 330)
-	panel.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-	panel.BackgroundTransparency = 0.1
-	panel.Visible = false
-	panel.Parent = gui
-	local panelCorner = Instance.new("UICorner")
-	panelCorner.CornerRadius = UDim.new(0, 12)
-	panelCorner.Parent = panel
-
-	local title = makeLabel("Loja da base", panel)
-	title.Position = UDim2.fromOffset(16, 10)
-	title.Size = UDim2.new(1, -80, 0, 32)
-
-	local closeButton = makeButton("X", Color3.fromRGB(200, 60, 60), panel)
-	closeButton.AnchorPoint = Vector2.new(1, 0)
-	closeButton.Position = UDim2.new(1, -10, 0, 10)
-	closeButton.Size = UDim2.fromOffset(36, 32)
-
-	local message = makeLabel("", panel)
-	message.AnchorPoint = Vector2.new(0, 1)
-	message.Position = UDim2.new(0, 16, 1, -10)
-	message.Size = UDim2.new(1, -32, 0, 24)
-	message.TextXAlignment = Enum.TextXAlignment.Center
+	local rowCount = #UpgradesConfig.Order
+	local window = Style.window("Loja da base", "🛒", Style.Colors.Green, Vector2.new(520, 130 + rowCount * (ROW_HEIGHT + 10)))
+	window.frame.Name = "ShopWindow"
+	window.frame.Parent = regions.windows
+	Style.list(window.content, 10)
 
 	local buyUpgrade = Remotes.getFunction(Remotes.Functions.BuyUpgrade)
-	local rows: { () -> () } = {}
+	local refreshers: { () -> () } = {}
 	local messageToken = 0
 
 	local function showMessage(text: string, success: boolean)
 		messageToken += 1
 		local token = messageToken
-		message.Text = text
-		message.TextColor3 = if success then Color3.fromRGB(120, 255, 140) else Color3.fromRGB(255, 110, 110)
+		window.message.Text = text
+		window.message.TextColor3 = if success then Style.Colors.Success else Style.Colors.Error
 		task.delay(MESSAGE_SECONDS, function()
 			if messageToken == token then
-				message.Text = ""
+				window.message.Text = ""
 			end
 		end)
 	end
 
 	for index, upgradeId in UpgradesConfig.Order do
 		local info = UpgradesConfig.List[upgradeId]
-		local rowY = 52 + (index - 1) * 80
-
-		local name = makeLabel(info.DisplayName, panel)
-		name.Position = UDim2.fromOffset(16, rowY)
-		name.Size = UDim2.new(1, -170, 0, 26)
-
-		local detail = makeLabel("", panel)
-		detail.Position = UDim2.fromOffset(16, rowY + 28)
-		detail.Size = UDim2.new(1, -170, 0, 20)
-		detail.TextColor3 = Color3.fromRGB(190, 190, 200)
-
-		local buy = makeButton("", Color3.fromRGB(40, 170, 90), panel)
-		buy.AnchorPoint = Vector2.new(1, 0)
-		buy.Position = UDim2.new(1, -16, 0, rowY + 4)
-		buy.Size = UDim2.fromOffset(140, 44)
+		local row = Style.row(`{ICONS[upgradeId] or "⭐"} {info.DisplayName}`, "", Style.Colors.Green, ROW_HEIGHT)
+		row.frame.LayoutOrder = index
+		row.frame.Parent = window.content
 
 		local function refresh()
 			local level = player:GetAttribute(`Upgrade_{upgradeId}`)
 			local current = if typeof(level) == "number" then level else 0
 			local cost = UpgradesConfig.CostFor(upgradeId, current)
-			detail.Text = `{info.Description} · nível {current}/{info.MaxLevel}`
-			buy.Text = if cost then `$ {Format.number(cost)}` else "Máximo"
-			buy.AutoButtonColor = cost ~= nil
-			buy.BackgroundColor3 = if cost then Color3.fromRGB(40, 170, 90) else Color3.fromRGB(90, 90, 100)
+			row.detail.Text = `{info.Description} · nível {current}/{info.MaxLevel}`
+			Style.setButtonText(row.button, if cost then `${Format.number(cost)}` else "Máximo")
+			Style.setButtonColor(row.button, if cost then Style.Colors.Green else Style.Colors.Gray)
 		end
-		table.insert(rows, refresh)
+		table.insert(refreshers, refresh)
 		player:GetAttributeChangedSignal(`Upgrade_{upgradeId}`):Connect(refresh)
 		refresh()
 
 		local busy = false
-		buy.Activated:Connect(function()
+		row.button.Activated:Connect(function()
 			if busy then
 				return
 			end
@@ -144,6 +90,9 @@ function ShopController:Start()
 			busy = false
 			if ok then
 				showMessage(if typeof(text) == "string" then text else "", success == true)
+				if success == true then
+					Style.pop(row.frame)
+				end
 			else
 				showMessage("Não foi possível falar com o servidor", false)
 			end
@@ -152,22 +101,26 @@ function ShopController:Start()
 
 	local function refreshOpenButton()
 		local inBase = player:GetAttribute("InOwnBase") == true
-		openButton.Visible = inBase
+		open.button.Visible = inBase
 		if not inBase then
-			panel.Visible = false
+			window.frame.Visible = false
 		end
 	end
 	player:GetAttributeChangedSignal("InOwnBase"):Connect(refreshOpenButton)
 	refreshOpenButton()
 
-	openButton.Activated:Connect(function()
-		panel.Visible = not panel.Visible
-		for _, refresh in rows do
+	open.button.Activated:Connect(function()
+		if window.frame.Visible then
+			window.frame.Visible = false
+			return
+		end
+		for _, refresh in refreshers do
 			refresh()
 		end
+		Hud.openWindow(window.frame)
 	end)
-	closeButton.Activated:Connect(function()
-		panel.Visible = false
+	window.close.Activated:Connect(function()
+		window.frame.Visible = false
 	end)
 end
 

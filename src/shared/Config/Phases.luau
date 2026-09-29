@@ -1,17 +1,17 @@
 --!strict
 
--- Spawn de pergaminhos por fase. Phases[N] vale para Workspace.Map.Phases.PhaseN.
+-- Spawn de totens (no código, "scroll") por fase. Phases[N] vale para Workspace.Map.Phases.PhaseN.
 -- Weights: peso de cada raridade (Id de Config/Rarities); raridade ausente = nunca aparece.
 
 export type PhaseConfig = {
 	Weights: { [string]: number },
-	MaxScrolls: number, -- máximo de pergaminhos no chão ao mesmo tempo
+	MaxScrolls: number, -- máximo de totens no chão ao mesmo tempo
 	SpawnInterval: number, -- segundos entre tentativas de spawn
 }
 
 export type LegendaryEventConfig = {
 	IntervalSeconds: number,
-	Phases: { number }, -- fases onde o pergaminho do evento pode aparecer
+	Phases: { number }, -- fases onde o totem do evento pode aparecer
 	Weights: { [string]: number },
 }
 
@@ -36,7 +36,7 @@ local Phases: { PhaseConfig } = {
 	phase(4, { Rare = 5, Epic = 30, Legendary = 38, Mythic = 20, Secret = 7 }),
 }
 
--- Pergaminho lendário+ de tempos em tempos numa fase final, com aviso no chat.
+-- Totem lendário+ de tempos em tempos numa fase final, com aviso no chat.
 -- Não conta no MaxScrolls da fase.
 local LegendaryEvent: LegendaryEventConfig = table.freeze({
 	IntervalSeconds = 5 * 60,
@@ -44,7 +44,19 @@ local LegendaryEvent: LegendaryEventConfig = table.freeze({
 	Weights = table.freeze({ Legendary = 75, Mythic = 20, Secret = 5 }),
 })
 
+-- Os totens nascem em volta do posto do guardião da fase (Workspace.Map.Guardians.GuardianN),
+-- entre MinDistance e Radius studs dele, pra ele ter o que defender. Fase sem
+-- guardião: em qualquer ponto da fase.
+local GuardianSpawn = table.freeze({
+	MinDistance = 6,
+	Radius = 25,
+})
+
 return table.freeze({
 	Phases = table.freeze(Phases),
 	LegendaryEvent = LegendaryEvent,
+	GuardianSpawn = GuardianSpawn,
+	-- Totem que caiu no chão (guardião pegou quem carregava) e ninguém buscou nesse
+	-- tempo volta sozinho pra perto do guardião.
+	DroppedTimeout = 30,
 })

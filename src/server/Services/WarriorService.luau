@@ -20,6 +20,7 @@ local Config = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config")
 local Rarities = require(Config:WaitForChild("Rarities"))
 local Warriors = require(Config:WaitForChild("Warriors"))
 local StealConfig = require(Config:WaitForChild("Steal"))
+local TotemsConfig = require(Config:WaitForChild("Totems"))
 
 local BaseService = require(script.Parent.BaseService)
 local CurrencyService = require(script.Parent.CurrencyService)
@@ -409,7 +410,7 @@ local function renderTotem(visual: SlotVisual, slot: SlotData, floorCFrame: CFra
 		if not Rarities[slot.Rarity] or not TotemService:HasTemplate(slot.Rarity) then
 			return
 		end
-		local totem = TotemService:Create(slot.Rarity, nil, false)
+		local totem = TotemService:Create(slot.Rarity, TotemsConfig.GroundHeight, false)
 		totem.Parent = parent
 		visual.totem = totem
 		visual.totemRarity = slot.Rarity
@@ -561,6 +562,8 @@ local function tickPlayer(player: Player, now: number)
 	end
 
 	local income = math.floor(incomeOf(player, slots) * incomeMultiplier(player))
+	-- Só pra UI (placar); o servidor nunca lê de volta.
+	player:SetAttribute("Income", income)
 	if income > 0 then
 		CurrencyService:AddMoney(player, income)
 	end

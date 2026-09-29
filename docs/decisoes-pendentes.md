@@ -50,6 +50,22 @@ Pontos em que foi preciso escolher sem perguntar (itens 7 a 12). Sempre foi esco
 - **Scripts dos modelos são removidos:** dos clones de totem e dos NPCs guardiões, com `warn` listando os nomes. Nos guardiões, a remoção acontece quando o servidor inicia, mas scripts no Workspace já rodaram ao abrir o jogo. Por isso o `warn` pede para apagá-los no Studio.
 - **Animação dos guardiões:** só parado e corrida (as padrão do R15), tocadas pelo servidor. Não há animação de pulo, queda nem de "andar devagar". Na volta ao posto ele também usa a corrida, com a velocidade das pernas acompanhando a real.
 - **Colocar clicando no chão:** o jogador precisa estar dentro do próprio ringue, e o ponto clicado também. Não há checagem extra de alcance: os dois estando na base já basta. A altura do clique só serve para validar; o slot salva só `OffsetX/Z`.
-- **Aceleração sem mudar o balanceamento:** `Speeds[N]` virou a velocidade máxima (a mesma de antes). A perseguição começa em 60% e chega nela em 3 s. Acelerar acima dos valores antigos deixaria a fase 10 mais rápida que o teto do jogador (350).
+- **Aceleração:** a perseguição começa em 60% da velocidade máxima do guardião e chega nela em 3 s.
 - **"Defender os totens"** foi interpretado como: ficar no posto (que você escolhe no Studio, perto dos totens), vigiar com alerta e perseguir só quem pegar um totem. Ninguém é atacado sem carregar totem.
 - **Giro do guardião** (virar para quem se aproxima) é feito escrevendo o `CFrame` do `HumanoidRootPart` aos poucos. Pode ficar um pouco "travado"; se incomodar, dá para trocar por `AlignOrientation`.
+- **Fases tiradas dos chãos:** sem `Map.Phases`, o `BaseService` usa os `Map.Corredor.Chao_FaseN` como fases. Cada volume vai de 5 studs abaixo até 40 acima do chão, e as sobreposições entre vizinhos são divididas no meio. Uma `Map.Phases` feita à mão continua tendo prioridade.
+- **Fase do guardião pela posição:** vale a fase onde o NPC está, não o número do nome. No mapa atual, o `Guardian2` está na fase 1 e o `Guardian1` na fase 2; funciona, mas gera `warn` até serem renomeados.
+- **Estátua vira rig:** os NPCs do mapa são estátuas R6 (sem `HumanoidRootPart`, peças soltas ou soldadas). O servidor monta o rig R6 padrão na pose atual. Um rig feito no *Rig Builder* continua sendo o ideal (proporções padrão, animações mais naturais).
+- **Letreiros dos NPCs removidos** (ex.: "Krillin"); o nome exibido é "Guardião da fase N".
+- **Totem no chão com 6 studs** (`Config/Totems.GroundHeight`): o `TotemTemplate` atual tem 28 studs de altura.
+
+## Níveis de velocidade e totem caído
+
+- **Nível × velocidade real:** os números pedidos (900 até 20B) são níveis. A velocidade real vem de uma escala logarítmica igual para jogador e guardião (`Config/Speed.RealSpeed`), entre 16 e ~276 studs/s. A física do Roblox não aguenta milhões de studs/s.
+- **Treino em porcentagem:** 1% do nível por segundo, mínimo +1. Estimativa até 20B: ~40 min sem upgrades, ~12 min com Treino no máximo, ~6 min com o Game Pass. Os valores ficam em `Config/Speed`.
+- **Dados antigos:** o `Speed` salvo continua o mesmo número, agora lido como nível. Quem tinha 100 pontos (andava a 66) passa a andar a ~45. Não precisa de migração (a chave e o tipo são os mesmos), mas quem já jogou fica um pouco mais lento até treinar de novo.
+- **Totem caído:** qualquer jogador pode pegar (disputa), depois de 1,5 s. Sem busca em 30 s, volta sozinho.
+- **Animações de pegar/segurar:** as padrão de ferramenta do Roblox (golpe e segurar). Não existe animação padrão de "pegar do chão"; dá para trocar os IDs em `Config/Guardians.Animations`.
+- **Guardião descansando:** sentado no chão com a animação padrão de sentar e o corpo baixado até o chão (a altura é calculada pela perna; `RestExtraDrop` ajusta). Ele só acorda quando alguém pega um totem da fase dele. Jogador sem totem pode chegar perto à vontade.
+- **Regra de velocidade:** com velocidade menor que a do guardião, ele corre 2× mais rápido que você (`ChaseAdvantage`) e persegue até o começo da fase 1. Com igual ou maior, você escapa. Se ainda der para escapar com velocidade menor (o tempo para acordar, `WakeDelay`, dá vantagem), é só subir o `ChaseAdvantage`.
+- **Caminho do guardião:** ele corre em linha reta até o alvo. Pedras ou paredes no meio do corredor (ex.: fase 6) podem prendê-lo.

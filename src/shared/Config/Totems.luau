@@ -9,6 +9,8 @@
 export type CarryMount = "Back" | "Head"
 
 return table.freeze({
+	-- Altura (studs) do totem no chão das fases e chocando na base (0 = tamanho do template).
+	GroundHeight = 6,
 	-- Altura (studs) do totem enquanto carregado; o clone é reduzido/aumentado pra isso.
 	CarryHeight = 2.5,
 	-- Onde o totem vai quando carregado: "Back" (costas) ou "Head" (acima da cabeça).
